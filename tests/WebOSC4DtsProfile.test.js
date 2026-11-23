@@ -55,10 +55,10 @@ test('C4: experimental DTS-only transcode advertises only DTS in fMP4 HLS and <=
     PlayerSettings.set('transcodeAudioCodec', 'auto');
 });
 
-test('C4: experimental Prefer DTS includes AC3/AAC fallback and uses fMP4 HLS', () => {
+test('C4: legacy Prefer DTS resolves to DTS-only output on fMP4 HLS', () => {
     setDtsMode('prefer_dts');
     const profiles = hlsProfiles(buildJellyfinProfile());
-    assert.deepEqual(profiles.map((p) => p.AudioCodec), ['dts', 'ac3', 'aac']);
+    assert.deepEqual(profiles.map((p) => p.AudioCodec), ['dts']);
     assert.ok(profiles.every((p) => p.Container === 'mp4'));
     PlayerSettings.set('transcodeAudioCodec', 'auto');
 });
@@ -71,7 +71,7 @@ test('C4: HTML5 fallback does not advertise DTS in HLS output', () => {
     PlayerSettings.set('transcodeAudioCodec', 'auto');
 });
 
-test('C4: Force Transcode honors experimental DTS-only instead of silently choosing AAC', () => {
+test('C4: Force Transcode outputs DTS, not AC3, for non-DTS source audio', () => {
     setDtsMode('force_dts');
     const profiles = hlsProfiles(buildJellyfinProfile({ playbackMode: 'transcode' }));
     assert.ok(profiles.length > 0);
@@ -87,5 +87,14 @@ test('C4: HTML5 Force Transcode remains compatible AAC output', () => {
     assert.ok(profiles.length > 0);
     assert.ok(profiles.every((p) => p.AudioCodec === 'aac'));
     assert.ok(profiles.every((p) => p.Container === 'ts'));
+    PlayerSettings.set('transcodeAudioCodec', 'auto');
+});
+
+test('C4: audio-only transcode mode requests DTS without substituting AC3', () => {
+    setDtsMode('force_dts');
+    const profiles = hlsProfiles(buildJellyfinProfile({ playbackMode: 'transcodeAudio', backend: 'webos' }));
+    assert.ok(profiles.length > 0);
+    assert.ok(profiles.every((p) => p.AudioCodec === 'dts'));
+    assert.ok(profiles.every((p) => p.Container === 'mp4'));
     PlayerSettings.set('transcodeAudioCodec', 'auto');
 });
