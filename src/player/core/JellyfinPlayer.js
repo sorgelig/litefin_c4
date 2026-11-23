@@ -2027,6 +2027,7 @@ export class JellyfinPlayer extends EventEmitter {
                 trackPlayable: selectedAudioTrack
                     ? isAudioTrackNativelyPlayable(selectedAudioTrack, mediaSource, this._backendType)
                     : false,
+                hasManualBitrate: this._manualBitrate > 0 && this._manualBitrate < 120000000,
                 wasEscalated: this._directPlayEscalated,
                 isLiveTv: options.item?.Type === 'TvChannel'
             }) && applyProgressiveAudioCopy(
