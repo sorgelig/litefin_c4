@@ -45,11 +45,12 @@ test('do not alter first/default DTS, unsupported TrueHD, explicit transcode or 
     assert.equal(should({ audioStreamIndex: 5 }), false);
     assert.equal(should({ backendType: 'html5' }), false);
     assert.equal(should({ userPlaybackMode: 'remux' }), false);
-    assert.equal(should({ userPlaybackMode: 'auto' }), false);
+    assert.equal(should({ userPlaybackMode: 'auto' }), true);
     assert.equal(should({ userPlaybackMode: 'auto', forceDirectPlay: 'all' }), true);
     assert.equal(should({ userPlaybackMode: 'auto', forceDirectPlay: 'audio' }), true);
     assert.equal(should({ userPlaybackMode: 'remux', forceDirectPlay: 'all' }), false);
     assert.equal(should({ requestedPlaybackMode: 'transcode' }), false);
+    assert.equal(should({ requestedPlaybackMode: 'remux', userPlaybackMode: 'remux' }), false);
     assert.equal(should({ hasManualBitrate: true }), false);
     assert.equal(should({ wasEscalated: true }), false);
     assert.equal(should({ needsAudioRemux: false }), false);
@@ -133,4 +134,27 @@ test('global Force Direct Play: construct progressive MKV when strict PlaybackIn
 test('never generate unauthenticated synthetic URLs without media identity', () => {
     assert.equal(buildProgressiveAudioCopyUrl(null, 3, 0, {}), null);
     assert.equal(buildProgressiveAudioCopyUrl(null, 3, 0, { itemId: 'movie-id' }), null);
+});
+
+test('Auto audio-track restart retains copy eligibility after Direct Play falls into HLS', () => {
+    // Previous implementation rejected Auto if an in-player Direct Play
+    // selection was reset during an internal restart. It also checked
+    // trackPlayable against PlaybackInfo's HLS transcoding session.
+    const ms = source();
+    assert.equal(should({
+        userPlaybackMode: 'auto',
+        requestedPlaybackMode: 'auto',
+        mediaSource: ms,
+        audioStreamIndex: 3,
+        needsAudioRemux: true,
+        trackPlayable: true
+    }), true);
+    assert.equal(should({
+        userPlaybackMode: 'auto',
+        requestedPlaybackMode: 'auto',
+        mediaSource: ms,
+        audioStreamIndex: 3,
+        needsAudioRemux: true,
+        trackPlayable: false
+    }), false);
 });
