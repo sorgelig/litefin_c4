@@ -13,7 +13,8 @@ function extractMethod(signature) {
 }
 const methods = vm.runInNewContext('({\n' + [
     'seek(positionTicks, options = {}) {',
-    'getCurrentPositionMs() {'
+    'getCurrentPositionMs() {',
+    'getCurrentPositionTicks() {'
 ].map(extractMethod).join(',\n') + '\n})', {
     log: { info() {}, warn() {}, error() {} },
     PlayerEvent: { RESTARTING: 'restarting' },
@@ -38,6 +39,7 @@ function makePlayer({ progressive = true, paused = false } = {}) {
         _currentPlayOptions: playOptions,
         _lastPlayOptions: playOptions,
         _transcodingOffsetTicks: 2000000000,
+        _progressiveSeekPositionTicks: null,
         _isSeeking: false,
         _seekFailsafeTimeout: null,
         _subtitleManager: { resetActiveCues() {} },
@@ -54,6 +56,9 @@ test('C4 progressive MKV seek restarts a copy stream at absolute timeline ticks'
     const { p, nativeSeeks, restarts, events } = makePlayer();
     const target = 36500000000;
     p.seek(target);
+    // During stop/reload the old webOS currentTime must not roll the clock back.
+    assert.equal(p.getCurrentPositionTicks(), target);
+    assert.equal(p.getCurrentPositionMs(), target / 10000);
     await flush();
     assert.equal(nativeSeeks.length, 0, 'must not seek inside unindexed MKV using currentTime');
     assert.equal(restarts.length, 1);
@@ -67,6 +72,7 @@ test('C4 progressive MKV seek restarts a copy stream at absolute timeline ticks'
     assert.ok(events.some(e => e.type === 'restarting'));
     assert.ok(events.some(e => e.type === 'seek' && e.data.positionTicks === target));
     assert.equal(p._isRestarting, false);
+    assert.equal(p._progressiveSeekPositionTicks, null);
 });
 
 test('C4 progressive seek preserves manual pause across stream restart', async () => {
