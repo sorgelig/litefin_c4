@@ -5,7 +5,8 @@ import {
     isDolbyTrack,
     shouldUseDolbyProgressiveCopy,
     buildDolbyProgressiveCopyUrl,
-    applyDolbyProgressiveCopy
+    applyDolbyProgressiveCopy,
+    shouldRestartDolbyProgressiveSeek
 } from '../src/player/core/WebOSDolbyProgressiveTest.js';
 
 const mkv = () => ({
@@ -92,4 +93,35 @@ test('player uses defined Live TV variable when invoking DD progressive routing'
     assert.match(source, /const isLiveChannel = options\.item\?\.Type === 'TvChannel'/);
     assert.match(source, /isLiveTv:\s*isLiveChannel/);
     assert.doesNotMatch(source, /\n\s+isLiveTv,\s*\n/);
+});
+
+test('progressive DD seeks restart the server copy, never the native time cursor', () => {
+    const ms = mkv();
+    assert.equal(shouldRestartDolbyProgressiveSeek('webos', ms, { itemId: 'item42' }), false);
+    ms._webosDolbyProgressiveCopy = true;
+    assert.equal(shouldRestartDolbyProgressiveSeek('webos', ms, { itemId: 'item42' }), true);
+    assert.equal(shouldRestartDolbyProgressiveSeek('html5', ms, { itemId: 'item42' }), false);
+    assert.equal(shouldRestartDolbyProgressiveSeek('webos', ms, null), false);
+
+    // A new progressive stream must embed the absolute requested offset.
+    const target = 3600 * 10000000;
+    const url = buildDolbyProgressiveCopyUrl({
+        itemId: 'item42', mediaSourceId: ms.Id, audioStreamIndex: 2,
+        startPositionTicks: target
+    });
+    assert.equal(new URL(url, 'http://jellyfin.invalid').searchParams.get('StartTimeTicks'), String(target));
+});
+
+test('DD seek handler dispatches restart path before native backend seeking', () => {
+    const source = readFileSync(new URL('../src/player/core/JellyfinPlayer.js', import.meta.url), 'utf8');
+    const start = source.indexOf('    seek(positionTicks, options = {}) {');
+    const end = source.indexOf('    seekRelative(offsetMs) {', start);
+    assert.ok(start >= 0 && end > start);
+    const handler = source.slice(start, end);
+    const first = handler.indexOf('if (shouldRestartDolbyProgressiveSeek(');
+    const fallback = handler.indexOf('this._backend?.seek(positionTicks, options);');
+    assert.ok(first >= 0 && fallback > first);
+    assert.match(handler, /this\.stop\(\{ restart: true \}\)/);
+    assert.match(handler, /startPositionTicks: positionTicks/);
+    assert.match(handler, /this\._progressiveSeekPositionTicks = positionTicks/);
 });
