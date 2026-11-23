@@ -10,6 +10,7 @@ on:
       - experiment/webos-dd-progressive-copy
       - experiment/webos-dd-progressive-seek-v2
       - experiment/webos-dd-ts-hls-v2.10.3
+      - experiment/webos-dd-ts-keyframe-v2.10.4
   workflow_dispatch:
 
 permissions:
