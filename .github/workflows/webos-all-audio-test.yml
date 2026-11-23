@@ -7,6 +7,7 @@ on:
       - experiment/webos-no-audio-switch-seek
       - experiment/webos-single-enable-audio
       - experiment/webos-enable-then-disable
+      - experiment/webos-pause-audio-switch
   workflow_dispatch:
 
 permissions:
