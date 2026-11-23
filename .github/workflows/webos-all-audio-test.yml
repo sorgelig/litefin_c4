@@ -8,6 +8,7 @@ on:
       - experiment/webos-single-enable-audio
       - experiment/webos-enable-then-disable
       - experiment/webos-dd-progressive-copy
+      - experiment/webos-dd-progressive-seek-v2
   workflow_dispatch:
 
 permissions:
