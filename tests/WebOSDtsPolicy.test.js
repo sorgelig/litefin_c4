@@ -3,7 +3,8 @@ import test from 'node:test';
 import {
     getRequestedAudioCodec,
     isDtsAudioCodec,
-    preferNativeDtsAuto
+    preferNativeDtsAuto,
+    setDtsHlsTranscodeBitrate
 } from '../src/player/core/WebOSDtsPolicy.js';
 
 const item = {
@@ -51,3 +52,35 @@ test('native DTS is preferred only in webOS Auto and never overrides manual tran
     assert.equal(preferNativeDtsAuto({ ...opts, selectedCodec: 'ac3' }), false);
 });
 
+
+test('C4: raise Jellyfin DTS HLS audio bitrate from 192k to 1536k without changing other query params', () => {
+    const source = { TranscodingUrl: '/Videos/id/master.m3u8?AudioCodec=dts&AudioBitrate=192000&VideoCodec=copy&MediaSourceId=abc&api_key=TEST' };
+    assert.equal(setDtsHlsTranscodeBitrate(source), true);
+    assert.equal(source.TranscodingUrl,
+        '/Videos/id/master.m3u8?AudioCodec=dts&AudioBitrate=1536000&VideoCodec=copy&MediaSourceId=abc&api_key=TEST');
+});
+
+test('C4: only DTS HLS URLs are changed (not AC3, EAC3, AAC or Direct Play)', () => {
+    for (const codec of ['ac3', 'eac3', 'aac']) {
+        const url = '/Videos/id/master.m3u8?AudioCodec=' + codec + '&AudioBitrate=192000';
+        const source = { TranscodingUrl: url };
+        assert.equal(setDtsHlsTranscodeBitrate(source), false, codec);
+        assert.equal(source.TranscodingUrl, url);
+    }
+    const source = { TranscodingUrl: '/Videos/id/stream.mkv?AudioCodec=dts&AudioBitrate=192000' };
+    assert.equal(setDtsHlsTranscodeBitrate(source), false);
+});
+
+test('C4: add missing bitrate to DTS fMP4 HLS URL and handle case variations', () => {
+    const source = { TranscodingUrl: '/Videos/id/master.m3u8?AudioCodec=DTS&MediaSourceId=x' };
+    assert.equal(setDtsHlsTranscodeBitrate(source), true);
+    assert.equal(source.TranscodingUrl, '/Videos/id/master.m3u8?AudioCodec=DTS&MediaSourceId=x&AudioBitrate=1536000');
+    const source2 = { TranscodingUrl: '/Videos/id/master.m3u8?AudioCodec=dca&AudioBitRate=192000' };
+    assert.equal(setDtsHlsTranscodeBitrate(source2), true);
+    assert.match(source2.TranscodingUrl, /AudioBitRate=1536000/);
+});
+
+test('C4: do not rewrite missing/null URLs', () => {
+    assert.equal(setDtsHlsTranscodeBitrate(null), false);
+    assert.equal(setDtsHlsTranscodeBitrate({}), false);
+});
