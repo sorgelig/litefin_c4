@@ -3010,6 +3010,7 @@ export class JellyfinPlayer extends EventEmitter {
         // Only clear state if NOT restarting
         if (!isRestartStop) {
             this._pendingStartPositionTicks = null;
+            this._progressiveSeekPositionTicks = null;
             this._clearRemuxStuckWatchdog();
             this._currentItem = null;
             this._currentMediaSource = null;
@@ -3112,6 +3113,10 @@ export class JellyfinPlayer extends EventEmitter {
                 'ticks, track', restartOptions.audioStreamIndex);
             this._currentPlayOptions = restartOptions;
             this._lastPlayOptions = restartOptions;
+            // Keep the absolute requested time visible during the stream reload;
+            // stop() and the old decoder can otherwise briefly report the old
+            // position, making the OSD look as if the seek bounced backward.
+            this._progressiveSeekPositionTicks = positionTicks;
             this._isRestarting = true;
             this._restartOwner = restartOptions;
             this.emit(PlayerEvent.RESTARTING);
@@ -3127,6 +3132,7 @@ export class JellyfinPlayer extends EventEmitter {
                 } finally {
                     if (this._restartOwner === restartOptions) {
                         this._isRestarting = false;
+                        this._progressiveSeekPositionTicks = null;
                     }
                 }
             })();
@@ -4480,6 +4486,9 @@ export class JellyfinPlayer extends EventEmitter {
      * @returns {number}
      */
     getCurrentPositionTicks() {
+        if (this._isRestarting && this._progressiveSeekPositionTicks != null) {
+            return this._progressiveSeekPositionTicks;
+        }
         if (this._isSeeking && this._seekTargetTicks !== null) {
             return this._seekTargetTicks;
         }
@@ -4504,6 +4513,9 @@ export class JellyfinPlayer extends EventEmitter {
      * @returns {number}
      */
     getCurrentPositionMs() {
+        if (this._isRestarting && this._progressiveSeekPositionTicks != null) {
+            return this._progressiveSeekPositionTicks / 10000;
+        }
         // Repeated relative seeks should advance from the pending target rather
         // than from the previous stream position while a seek/restart is pending.
         if (this._isSeeking && this._seekTargetTicks != null) {
