@@ -2966,17 +2966,22 @@ export class WebOSPlayer {
             return;
         }
 
-        // EXPERIMENT: switch audio with one write, avoiding the transient
-        // all-disabled state caused by disabling the old track before enabling
-        // the new one. LG's Chromium/selectTrack handles deactivating the old
-        // track when the selected native track is enabled.
-        const oldEnabled = [];
+        // EXPERIMENT: activate requested audio first, then disable the others.
+        // The single-enable experiment did not actually switch tracks on LG C4.
+        // This ensures a single selected track without a transient all-disabled
+        // state, unlike upstream's index-ordered disable-before-enable loop.
+        const previouslyEnabled = [];
         for (let i = 0; i < audioTracks.length; i++) {
-            if (audioTracks[i].enabled) oldEnabled.push(i);
+            if (audioTracks[i].enabled) previouslyEnabled.push(i);
         }
         audioTracks[nativeIndex].enabled = true;
-        log.warn('[AudioSingleEnableTest] Switched native audio track without disabling others:', {
-            listIndex, nativeIndex, previouslyEnabled: oldEnabled,
+        for (let i = 0; i < audioTracks.length; i++) {
+            if (i !== nativeIndex && audioTracks[i].enabled) {
+                audioTracks[i].enabled = false;
+            }
+        }
+        log.warn('[AudioEnableThenDisableTest] Native track switch completed:', {
+            listIndex, nativeIndex, previouslyEnabled,
             nowEnabled: Array.from({ length: audioTracks.length }, (_, i) => audioTracks[i].enabled ? i : -1).filter(i => i >= 0)
         });
 
