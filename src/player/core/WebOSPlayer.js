@@ -2971,13 +2971,12 @@ export class WebOSPlayer {
         }
         log.info('WebOSPlayer: Native audio track → list index', listIndex, '→ native index', nativeIndex);
 
-        // WebOS native media pipeline does not apply audioTracks.enabled changes
-        // mid-playback without a seek. A sub-frame back-seek (≤0.1 s) forces the
-        // hardware decoder to reinitialize with the new track state while staying
-        // in DirectPlay mode (preserving Dolby Vision passthrough).
-        if (video.readyState >= 2 /* HAVE_CURRENT_DATA */ && video.currentTime > 0.1) {
-            video.currentTime = video.currentTime - 0.1;
-        }
+        // EXPERIMENT: do not force a 0.1-second backward seek after enabling
+        // the selected native audioTracks entry. Some webOS/ARC pipelines seem
+        // to signal AC3 briefly and then renegotiate to PCM after this seek.
+        // If track selection fails to take effect, the seek was necessary;
+        // if it succeeds and DD remains bitstream, the seek was the culprit.
+        log.warn('[AudioSwitchNoSeekTest] Native audioTracks enabled; deliberately skipping decoder-reset seek.');
     }
 
     /**
