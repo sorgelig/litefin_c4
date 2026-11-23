@@ -265,6 +265,9 @@ var PORT = 8123;
 /* Bind strictly to loopback (127.0.0.1) so the service never opens listening sockets on the TV's physical Ethernet NIC */
 var LISTEN_HOST = '127.0.0.1';
 
+// Virtual MKV streams run on the existing loopback HTTP service (webOS only).
+var virtualMkv = isWebOS ? require('./virtual-mkv').install(service, PORT) : null;
+
 function writeResponse(res, code, contentType, body) {
     var headers = {
         'Content-Type': contentType,
@@ -558,6 +561,7 @@ function sendWolPacket(macAddress) {
 
 function handler(req, res) {
     var u = urlMod.parse(req.url, true);
+    if (virtualMkv && virtualMkv.handle(req, res, u.pathname)) return;
     if (req.method === 'OPTIONS') return writeResponse(res, 204, 'text/plain', '');
 
     if (u.pathname === '/player.html') {
