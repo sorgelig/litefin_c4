@@ -76,6 +76,9 @@ const isDtsSupported = () => {
  */
 const isWebOSAudioTrackPlayable = (stream) => {
     if (!stream || !stream.Codec) return true;
+    // Diagnostic build: advertise support for every audio codec during native
+    // track-selection fallback as well. Actual demuxer/ARC behavior is unchanged.
+    if (getDeviceCapabilities()?.diagnosticAllAudioPassthrough) return true;
     const codec = stream.Codec.toLowerCase();
 
     // Dolby TrueHD: WebOS web applications lack native decode or bitstream capability for TrueHD
