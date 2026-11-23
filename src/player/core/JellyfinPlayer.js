@@ -908,17 +908,19 @@ export class JellyfinPlayer extends EventEmitter {
                 // requires a server-selected stream. Restarting with explicit
                 // 'remux' bypasses the C4 progressive MKV bitstream-copy path,
                 // sending compressed audio through fMP4 HLS and causing PCM ARC.
-                // Auto + _forceDirectStream instead allows the fresh PlaybackInfo
-                // to select the requested track, followed by A/V stream copy.
-                // Explicit user Remux/Transcode requests and error escalation
-                // keep their respective modes.
+                // Preserve an explicit user Direct Play choice. The C4 can
+                // isolate the selected AC3 track via progressive MKV copy;
+                // switching the internal mode to Auto here loses the choice
+                // and can route later switches back through DTS HLS.
+                // Explicit Remux/Transcode choices and escalations stay intact.
                 const restartPlaybackMode = getFailedAudioSwitchRestartMode(
                     this._backendType,
                     this._userPlaybackMode,
                     this._playbackMode
                 );
                 const preferProgressiveAudioCopy =
-                    this._backendType === 'webos' && restartPlaybackMode === 'auto';
+                    this._backendType === 'webos' &&
+                    (restartPlaybackMode === 'auto' || restartPlaybackMode === 'directPlay');
                 const restartOptions = {
                     ...this._currentPlayOptions,
                     audioStreamIndex: targetIndex,
@@ -3283,8 +3285,9 @@ export class JellyfinPlayer extends EventEmitter {
             // ────────────────────────────────────────────────────────────────
             // Calculate Restart Playback Mode
             // ────────────────────────────────────────────────────────────────
-            // - If the user's mode is explicitly a forced mode
-            //   ('transcode' or 'remux'), we preserve it.
+            // - Preserve explicitly selected Direct Play on webOS as well as
+            //   explicit Remux/Transcode. A non-default AC3 track can use
+            //   the progressive MKV bitstream-copy path in Direct Play mode.
             // - Otherwise, we default to 'auto' to let the server decide.
             // - If the target codec is unsupported or audio requires remux,
             //   we ensure 'auto' mode so CodecProfiles / DirectStream profiles
@@ -3292,13 +3295,24 @@ export class JellyfinPlayer extends EventEmitter {
             // - If the target track can DirectPlay natively, we revert to the
             //   user's playback mode (allowing return to DirectPlay).
             // ────────────────────────────────────────────────────────────────
+            const preserveExplicitDirectPlay =
+                this._backendType === 'webos' &&
+                this._userPlaybackMode === 'directPlay' &&
+                this._playbackMode !== 'transcode' && !this._directPlayEscalated;
             const baseMode =
                 this._userPlaybackMode === 'transcode' || this._userPlaybackMode === 'remux'
                     ? this._userPlaybackMode
-                    : 'auto';
-            const restartPlaybackMode = baseMode === 'transcode' ? 'transcode'
+                    : preserveExplicitDirectPlay ? 'directPlay' : 'auto';
+            const restartPlaybackMode = baseMode === 'transcode' || baseMode === 'directPlay'
+                ? baseMode
                 : (!isTargetCodecSupported || needsDirectStreamForAudio) ? 'auto'
                     : baseMode;
+            log.info('[WebOS Audio] Track-switch playback mode:', {
+                requested: this._userPlaybackMode,
+                previous: this._playbackMode,
+                restart: restartPlaybackMode,
+                directPlayPreserved: preserveExplicitDirectPlay
+            });
 
             const restartOptions = {
                 ...this._currentPlayOptions,
@@ -5293,26 +5307,35 @@ export class JellyfinPlayer extends EventEmitter {
         // ----------------------------------------------------------------
         if (!['auto', 'directPlay', 'transcode', 'remux', 'transcodeVideo', 'transcodeAudio'].includes(mode)) return;
 
-        // The Playback Mode menu shows getPlaybackMode(): confirming that one
-        // changes nothing (an item remuxed for its audio track would only be
-        // restarted into the same remux)
-        if (mode === this.getPlaybackMode()) return;
+        // getPlaybackMode() is the remembered user choice, which can differ
+        // from the current item's effective mode after a track switch/fallback.
+        // Re-selecting the same menu entry must restore the requested mode.
+        // Also permit explicit Direct Play retry if the active backend fell
+        // back to transcoding without changing _playbackMode.
+        const isActive = this._isPlaying || this._isPaused || this._state === 'buffering';
+        const activeDirectPlayRoute = this._currentPlayMethod === 'DirectPlay' ||
+            Boolean(this._currentMediaSource?._webosProgressiveAudioCopy);
+        const retryDirectPlay = mode === 'directPlay' && isActive && !activeDirectPlayRoute;
+        if (mode === this.getPlaybackMode() && this._playbackMode === mode && !retryDirectPlay) return;
 
         // A mode picked here is the user's, also for the next items, and replaces
         // the mode a restart of the item fell back to
         this._userPlaybackMode = mode;
         this._itemFallbackMode = null;
+        // User-requested mode changes/retries clear an old decoder fallback
+        // so the fresh PlaybackInfo may attempt bitstream copying again.
+        this._directPlayEscalated = false;
 
         // The item may already play in it (the remux play() chose for its
         // audio track, the transcode a failed direct play fell back to)
-        if (this._playbackMode === mode) return;
+        if (this._playbackMode === mode && !retryDirectPlay) return;
 
         this._playbackMode = mode;
         log.info(`Playback mode set to: ${mode}`);
 
         // Re-initialize playback if active
         // Check for specific backend states that imply activity
-        if (this._isPlaying || this._isPaused || this._state === 'buffering') {
+        if (isActive) {
             log.info('Restarting playback to apply new mode');
 
             if (this._lastPlayOptions) {
