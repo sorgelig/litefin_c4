@@ -3,6 +3,7 @@ import { i18n } from '../../utils/i18n.js';
 import { languageManager } from '../../utils/LanguageManager.js';
 import { PlayerSettings } from '../../utils/PlayerSettings.js';
 import { platformInfo } from '../../utils/PlatformInfo.js';
+import { getDeviceCapabilities } from '../../api/DeviceProfile.js';
 
 /**
  * TrackMenu
@@ -209,14 +210,22 @@ export default class TrackMenu extends BaseMenu {
                 const isTrueHd = codec === 'truehd' || codec === 'mlp';
                 const isDts = codec.includes('dts') || codec === 'dca';
                 const onWebOS = Boolean(platformInfo?.isWebOS);
+                const testAllAudio = onWebOS &&
+                    getDeviceCapabilities()?.diagnosticAllAudioPassthrough === true;
                 const isWebOSPassthrough = onWebOS && (
+                    testAllAudio ||
                     (isTrueHd && PlayerSettings.get('enableTrueHd') === 'enable') ||
                     (isDts && PlayerSettings.get('enableDts') === 'enable')
                 );
 
                 if (isWebOSPassthrough) {
                     isUnsupported = false;
-                    const badgeText = (i18n.t('Passthrough') || 'PASSTHROUGH').toUpperCase();
+                    // TEST badge asserts declared capability only. It must not
+                    // imply the currently playing session actually bitstreams:
+                    // HLS can decode supported codecs into PCM on webOS.
+                    const badgeText = testAllAudio
+                        ? 'PASSTHROUGH TEST'
+                        : (i18n.t('Passthrough') || 'PASSTHROUGH').toUpperCase();
                     metadataHtml += `<span class="track-badge">${badgeText}</span>`;
                 } else if (isUnsupported) {
                     metadataHtml += `<span class="track-badge track-badge-unsupported">${i18n.t('Transcode') || 'TRANSCODE'}</span>`;
