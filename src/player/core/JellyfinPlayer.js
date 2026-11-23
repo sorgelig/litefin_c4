@@ -2031,6 +2031,40 @@ export class JellyfinPlayer extends EventEmitter {
 
             log.info(`[PlaybackMode] Calculated PlayMethod: ${playMethod}`);
 
+            if (this._backendType === 'webos' &&
+                getDeviceCapabilities()?.diagnosticAllAudioPassthrough === true) {
+                const chosen = (mediaSource.MediaStreams || []).find(
+                    s => s.Type === 'Audio' && Number(s.Index) === Number(options.audioStreamIndex)
+                );
+                let params = {};
+                try {
+                    if (mediaSource.TranscodingUrl) {
+                        const streamUrl = new URL(mediaSource.TranscodingUrl, 'https://diagnostic.invalid');
+                        params = {
+                            audioCodec: streamUrl.searchParams.get('AudioCodec'),
+                            videoCodec: streamUrl.searchParams.get('VideoCodec'),
+                            reasons: streamUrl.searchParams.get('TranscodeReasons'),
+                            static: streamUrl.searchParams.get('Static')
+                        };
+                    }
+                } catch (e) { /* Invalid/relative platform-specific URL */ }
+                log.warn('[AllAudioDiagnostic] Server playback decision:', {
+                    selectedAudioIndex: options.audioStreamIndex,
+                    selectedSourceCodec: chosen?.Codec || null,
+                    selectedSourceChannels: chosen?.Channels ?? null,
+                    selectedIsDefault: Boolean(chosen?.IsDefault),
+                    playMethod,
+                    sourceContainer: mediaSource.Container,
+                    outputContainer: mediaSource.TranscodingContainer,
+                    outputProtocol: mediaSource.TranscodingSubProtocol,
+                    isVideoDirect: mediaSource.TranscodingInfo?.IsVideoDirect ?? null,
+                    isAudioDirect: mediaSource.TranscodingInfo?.IsAudioDirect ?? null,
+                    supportsDirectPlay: mediaSource.SupportsDirectPlay,
+                    supportsDirectStream: mediaSource.SupportsDirectStream,
+                    outputUrl: params
+                });
+            }
+
             // Store the resolved play method so track-switching logic can
             // reliably detect transcoding without re-deriving from media source
             // flags (which may have been mutated, e.g. by the remux case above).
@@ -4558,7 +4592,11 @@ export class JellyfinPlayer extends EventEmitter {
         // ---------------------------------------------------------------------
         // The prewarm is only reused when it was requested with the same
         // bitrate limit (a quality change in the OSD lowers it)
-        const prewarmedPromise = prewarmManager.consumePlaybackInfo(options.itemId, {
+        // Diagnostic: PlaybackInfo must be negotiated afresh with the
+        // all-codecs/audio-direct request, not reused from an earlier session.
+        const diagnosticAllAudio = this._backendType === 'webos' &&
+            getDeviceCapabilities()?.diagnosticAllAudioPassthrough === true;
+        const prewarmedPromise = diagnosticAllAudio ? null : prewarmManager.consumePlaybackInfo(options.itemId, {
             ...options,
             maxStreamingBitrate: maxBitrate
         });
@@ -4742,6 +4780,17 @@ export class JellyfinPlayer extends EventEmitter {
             } else if (forceDirectPlaySetting === 'audio') {
                 currentMode = 'forceDirectPlayAudio';
             }
+        }
+
+        // Audio-only Direct Play diagnostic: in Auto, request original compressed
+        // audio packets for every advertised format. This uses Litefin's existing
+        // forceDirectPlayAudio PlaybackInfo policy, leaves video fallback enabled,
+        // and does not affect an explicit in-player Transcode/Direct Play choice.
+        if (this._backendType === 'webos' &&
+            getDeviceCapabilities()?.diagnosticAllAudioPassthrough === true &&
+            currentMode === 'auto') {
+            currentMode = 'forceDirectPlayAudio';
+            log.warn('[AllAudioDiagnostic] Auto -> Force Audio Direct Play (source audio copy requested).');
         }
 
         switch (currentMode) {
