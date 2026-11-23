@@ -90,7 +90,13 @@ import {
     rememberContainerWithoutAudioTracks,
     hasContainerWithoutAudioTracks,
     doesAudioTrackRequireDirectStream
-} from './StreamUtils.js';
+ } from './StreamUtils.js';
+
+import {
+    getRequestedAudioCodec,
+    preferNativeDtsAuto,
+    avoidUnsupportedDtsEncode
+} from './WebOSDtsPolicy.js';
 
 export {
     isTrueHdSupported,
@@ -1894,9 +1900,23 @@ export class JellyfinPlayer extends EventEmitter {
                 ? doesAudioTrackRequireDirectStream(activeMs, options.audioStreamIndex, this._backendType)
                 : false;
 
+            // DTS passthrough on the C4 is known to work over native Direct Play.
+            // In Auto mode, a cached missing audioTracks list must not force a
+            // remux through HLS, which can lose the DTS bitstream.
+            const nativeDtsAuto = preferNativeDtsAuto({
+                backendType: this._backendType,
+                dtsSupported: isDtsSupported(),
+                selectedCodec: getRequestedAudioCodec(options),
+                playbackMode: this._playbackMode,
+                forceTranscode: PlayerSettings.get('forceTranscode'),
+                hasManualBitrate: this._manualBitrate > 0
+            });
             const needsDirectStreamForAudio = options._forceDirectStream ||
-                trackRequiresDirectStream ||
+                (trackRequiresDirectStream && !nativeDtsAuto) ||
                 (isHtml5Backend && !supportsNativeAudio && (isCustomAudioTrack || !isFirstAudioTrack));
+            if (trackRequiresDirectStream && nativeDtsAuto) {
+                log.info('[C4 DTS] Auto: bypassing audio remux; prefer native Direct Play.');
+            }
 
             // Determine effective playback mode for profiling
             let profilePlaybackMode = this._playbackMode;
@@ -4552,13 +4572,24 @@ export class JellyfinPlayer extends EventEmitter {
         // Read max bitrate: priority to deviceProfile if passed (it contains the logic)
         // Fallback to manualBitrate or 120Mbps
         const maxBitrate = deviceProfile?.MaxStreamingBitrate || manualBitrate || 120000000;
+        const requestedAudioCodec = getRequestedAudioCodec(options);
+        const nativeDtsAuto = preferNativeDtsAuto({
+            backendType: this._backendType,
+            dtsSupported: isDtsSupported(),
+            selectedCodec: requestedAudioCodec,
+            playbackMode: options.playbackMode || this._playbackMode || 'auto',
+            forceTranscode: PlayerSettings.get('forceTranscode'),
+            hasManualBitrate: typeof manualBitrate === 'number' && manualBitrate > 0 && manualBitrate < 120000000
+        });
 
         // ---------------------------------------------------------------------
         // Check for Zero-Latency Prewarmed PlaybackInfo
         // ---------------------------------------------------------------------
         // The prewarm is only reused when it was requested with the same
         // bitrate limit (a quality change in the OSD lowers it)
-        const prewarmedPromise = prewarmManager.consumePlaybackInfo(options.itemId, {
+        // A cached prewarm may contain an HLS URL from a non-DTS profile.
+        // Request fresh playback info for the C4's native DTS direct play.
+        const prewarmedPromise = nativeDtsAuto ? null : prewarmManager.consumePlaybackInfo(options.itemId, {
             ...options,
             maxStreamingBitrate: maxBitrate
         });
@@ -4728,6 +4759,11 @@ export class JellyfinPlayer extends EventEmitter {
             // Manual bitrate cap requires transcoding
             currentMode = 'transcode';
             log.info(`[PlaybackMode] Manual bitrate limit active (${manualBitrate} bps): using transcode mode`);
+        } else if (nativeDtsAuto) {
+            // Same policy as the confirmed working "Force A/V Direct Play
+            // with fallback", but only for DTS on native webOS Auto mode.
+            currentMode = 'directPlay';
+            log.info('[C4 DTS] Auto: native DTS Direct Play with playback-error fallback.');
         } else {
             // Default policy from global user settings
             const forceTranscodeSetting = PlayerSettings.get('forceTranscode');
@@ -4911,6 +4947,18 @@ export class JellyfinPlayer extends EventEmitter {
             default:
                 // Keep defaults, Server and DeviceProfile make the decision
                 break;
+        }
+
+        // DTS copy into fMP4 works on a DTS source, but DTS encoding of an
+        // unrelated source generally fails without server-side -strict -2.
+        // Keep DTS passthrough, but fall back to AC3/AAC on non-DTS inputs.
+        if (platformInfo.isWebOS && this._backendType === 'webos' &&
+            avoidUnsupportedDtsEncode(
+                requestBody.DeviceProfile,
+                requestedAudioCodec,
+                PlayerSettings.get('transcodeAudioCodec')
+            )) {
+            log.info('[C4 DTS] Non-DTS input: bypassing experimental DTS encoder for AC3/AAC HLS.');
         }
 
         // -------------------------------------------------------------------------
