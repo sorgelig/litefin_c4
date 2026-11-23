@@ -1,0 +1,41 @@
+name: Build WebOS All-Audio Passthrough Diagnostic
+
+on:
+  push:
+    branches:
+      - experiment/webos-all-audio-passthrough
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  webos-modern-ipk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout clean-baseline experiment
+        uses: actions/checkout@v4
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Check syntax and diagnostic profile
+        run: |
+          node --check src/api/profiles/WebOSProfile.js
+          node --check src/player/core/StreamUtils.js
+          node --check src/player/core/WebOSPlayer.js
+          node --test tests/WebOSAllAudioDiagnostic.test.js
+      - name: Build installable webOS Modern IPK
+        run: |
+          mkdir -p .sign
+          npm run package:webos-modern
+      - name: Upload diagnostic IPK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Litefin-webOS-all-audio-diagnostic
+          path: Litefin-*-webOS-Modern.ipk
+          if-no-files-found: error
+          retention-days: 30
