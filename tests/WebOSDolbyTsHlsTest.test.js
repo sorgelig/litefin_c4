@@ -33,7 +33,7 @@ test('only MKV Dolby tracks use HLS test, even when DTS is default', () => {
     assert.equal(eligible(ms,2,{backendType:'html5'}),false);
     assert.equal(eligible(ms,2,{userPlaybackMode:'remux'}),false);
 });
-test('fMP4 URL becomes TS-HLS short segment with video/audio copy', () => {
+test('fMP4 URL becomes TS-HLS with keyframe-aligned video/audio copy', () => {
     const url = buildDolbyTsHlsUrl({
         transcodingUrl:'/Videos/item123/master.m3u8?MediaSourceId=old&SegmentContainer=mp4&SegmentLength=6&AudioCodec=aac&VideoCodec=h264&AudioBitrate=256000&TranscodeReasons=AudioCodecNotSupported',
         itemId:'item123',mediaSourceId:'source123',playSessionId:'session1',
@@ -42,11 +42,15 @@ test('fMP4 URL becomes TS-HLS short segment with video/audio copy', () => {
     const u = new URL(url,'http://example.invalid');
     assert.equal(u.pathname,'/Videos/item123/master.m3u8');
     for(const [key,value] of Object.entries({
-        SegmentContainer:'ts',Container:'ts',SegmentLength:'1',
+        SegmentContainer:'ts',Container:'ts',
         AudioCodec:'copy', VideoCodec:'copy',AudioStreamIndex:'2',
         MediaSourceId:'source123',ApiKey:'secret',
         AllowAudioStreamCopy:'true',AllowVideoStreamCopy:'true'
     })) assert.equal(u.searchParams.get(key),value,key);
+    // Old fMP4 'SegmentLength=6' and test 1s value must both be absent.
+    assert.equal(u.searchParams.has('SegmentLength'),false);
+    assert.equal(u.searchParams.get('BreakOnNonKeyFrames'),'false');
+    assert.equal(u.searchParams.get('MinSegments'),'2');
     assert.equal(u.searchParams.has('TranscodeReasons'),false);
     assert.equal(u.searchParams.has('AudioBitrate'),false);
 });
