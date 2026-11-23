@@ -177,7 +177,7 @@ export function isAudioTrackNativelyPlayable(track, mediaSource = null, backendT
     const isForcedDtsWebOS =
         isWebOSActive &&
         (codec.includes('dts') || codec === 'dca') &&
-        PlayerSettings.get('enableDts') === 'enable';
+        isDtsSupported();
 
     const passthroughForcedOnWebOS = isForcedTrueHdWebOS || isForcedDtsWebOS;
 
@@ -883,7 +883,7 @@ export function doesAudioTrackRequireDirectStream(mediaSource, audioStreamIndex,
     const targetCodec = (targetStream.Codec || '').toLowerCase();
     const isForcedDtsTarget = isWebOSActive &&
         (targetCodec.includes('dts') || targetCodec === 'dca') &&
-        PlayerSettings.get('enableDts') === 'enable';
+        isDtsSupported();
     if (physicalDefaultStream && !isForcedDtsTarget &&
         !isAudioTrackNativelyPlayable(physicalDefaultStream, mediaSource, backendType)) {
         return true;
@@ -914,7 +914,7 @@ export function doesAudioTrackRequireDirectStream(mediaSource, audioStreamIndex,
     // On Auto or Disabled, remuxing remains required as before.
     const isWebOSForcedPassthrough =
         isWebOSActive && (
-            ((codec.includes('dts') || codec === 'dca') && PlayerSettings.get('enableDts') === 'enable') ||
+            ((codec.includes('dts') || codec === 'dca') && isDtsSupported()) ||
             ((codec === 'truehd' || codec === 'mlp') && PlayerSettings.get('enableTrueHd') === 'enable')
         );
 
