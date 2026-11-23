@@ -1960,6 +1960,15 @@ export class WebOSPlayer {
                 ? `— Hls.js tracks: ${describeAudioTracks(hls.audioTracks)}`
                 : `— native tracks: ${describeAudioTracks(this._videoElement && this._videoElement.audioTracks)}`);
 
+        // A/B transport test: selected Dolby track is the only audio stream
+        // in the server-generated progressive MKV. Native audioTracks indices
+        // from the original source do not apply and must not trigger a remux
+        // restart or re-select a different (nonexistent) stream.
+        if (!hls && options.mediaSource?._webosDolbyProgressiveCopy) {
+            log.warn('[DolbyProgressiveTest] Progressive MKV has isolated selected DD track; skipping native audioTracks selection.');
+            return;
+        }
+
         // ---- Audio track ----
         if (options.audioStreamIndex !== undefined && options.audioStreamIndex !== null) {
             // JellyfinPlayer precomputes the backend-visible list index because
