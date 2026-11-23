@@ -91,6 +91,13 @@ export function isAudioTrackNativelyPlayable(track, mediaSource = null, backendT
     const codec = track.Codec.toLowerCase();
     const caps = getDeviceCapabilities();
 
+    // In this diagnostic build, a browser probe or the current HLS session
+    // must not mark an audio codec as hardware-unsupported. This deliberately
+    // reports CAPABILITY, not the codec of the actual output transport.
+    if (backendType === 'webos' && caps?.diagnosticAllAudioPassthrough) {
+        return true;
+    }
+
     // -------------------------------------------------------------------------
     // Advanced Backend (ExoPlayer & MoviPlayer) Capabilities
     // -------------------------------------------------------------------------
@@ -152,13 +159,6 @@ export function isAudioTrackNativelyPlayable(track, mediaSource = null, backendT
                 return false;
             }
         }
-    }
-
-    // Diagnostic: do not let a false browser codec probe veto webOS native
-    // passthrough before the player has actually tried the stream. A currently
-    // transcoded active track was handled above and remains correctly reported.
-    if (backendType === 'webos' && caps?.diagnosticAllAudioPassthrough) {
-        return true;
     }
 
     // -------------------------------------------------------------------------
@@ -904,7 +904,12 @@ export function doesAudioTrackRequireDirectStream(mediaSource, audioStreamIndex,
 
     // Direct play of this container already came back without video.audioTracks
     // on this backend, so a non-default track cannot be switched to natively.
-    if (hasContainerWithoutAudioTracks(backendType, mediaSource.Container)) {
+    // Diagnostic: ignore stale "this container had no native audioTracks"
+    // memory and retry the TV native track API for every format. If it really
+    // cannot switch, the existing audiotrackswitchfailed fallback still runs.
+    const diagnosticNativeRetry = isWebOSActive &&
+        getDeviceCapabilities()?.diagnosticAllAudioPassthrough === true;
+    if (hasContainerWithoutAudioTracks(backendType, mediaSource.Container) && !diagnosticNativeRetry) {
         return true;
     }
 
