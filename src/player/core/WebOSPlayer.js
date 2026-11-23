@@ -839,6 +839,14 @@ export class WebOSPlayer {
         const isLive = options.item?.Type === 'TvChannel' || options.mediaSource?.LiveStreamId;
         this._robustSeekTarget = isLive ? null : (options.playerStartPositionTicks || 0) / 10000000;
 
+        // EXPERIMENT: switch to AC3 by loading the same original MKV on a
+        // brand-new video element, rather than changing an already-running
+        // decoder or asking Jellyfin to remux the file.
+        if (options.nativeAc3Reload) {
+            log.warn('[Ac3NativeReinitTest] Replacing video element for fresh AC3 decoder startup');
+            this._replaceVideoElement();
+        }
+        this._nativeAc3Preselected = false;
         const video = this._ensureVideoElement();
 
         // Route the audio through the normalization gain (or back to unity gain) before the
@@ -1503,6 +1511,14 @@ export class WebOSPlayer {
             video.src = url;
         }
 
+        // Before loading, arm the earliest native-audio selection callback.
+        // On LG, video.audioTracks can appear only at canplay; we also retry
+        // there. This performs the selection before play() starts.
+        if (options.nativeAc3EarlySelect && !this._isHls) {
+            this._listen(video, 'loadedmetadata', () => {
+                this._tryPreselectNativeAc3(video, options, 'loadedmetadata');
+            });
+        }
         video.load();
 
         const session = this._sessionId;
@@ -1513,9 +1529,13 @@ export class WebOSPlayer {
             if (this._isSessionActive(session)) this._loadPending = false;
         }
 
-        // Apply audio/subtitle tracks at canplay — same timing as _playNativeHls.
-        // audioTracks is not reliably populated at loadedmetadata on WebOS native
-        // player, so doing it here (before play()) ensures the array is ready.
+        // Prefer selecting AC3 before video.play() to test whether starting
+        // with AC3 avoids the PCM downmix observed when toggling mid-playback.
+        if (options.nativeAc3EarlySelect) {
+            this._tryPreselectNativeAc3(video, options, 'canplay');
+        }
+        // Apply normal track logic only for other streams. This experiment
+        // must not trigger a fallback to HLS when nativeTracks is empty.
         this._applyInitialTracks(options);
 
         return this._sessionPromise((resolve, reject) => {
@@ -1947,6 +1967,51 @@ export class WebOSPlayer {
     }
 
     /**
+     * Test selecting compressed AC3 on the original MKV before playback
+     * begins. This is intentionally different from all previous experiments,
+     * which changed audioTracks during active playback.
+     *
+     * Returns false when the TV has not exposed the native track list, rather
+     * than falling back to remux, so the outcome remains diagnostic.
+     */
+    _tryPreselectNativeAc3(video, options, phase) {
+        if (!options.nativeAc3EarlySelect || this._nativeAc3Preselected) return;
+        if (this._videoElement !== video || this._currentPlayOptions !== options) return;
+        const tracks = video.audioTracks;
+        if (!tracks?.length) {
+            log.warn('[Ac3NativeReinitTest] No audioTracks at ' + phase);
+            return;
+        }
+        const idx = this._resolveNativeAudioIndex(options.audioTrackListIndex, tracks);
+        if (idx < 0 || idx >= tracks.length) {
+            log.warn('[Ac3NativeReinitTest] Could not map target to native audio track', {
+                phase, listIndex: options.audioTrackListIndex,
+                nativeTrackCount: tracks.length
+            });
+            return;
+        }
+        try {
+            const old = [];
+            for (let i = 0; i < tracks.length; i++) if (tracks[i].enabled) old.push(i);
+            // Enable first; LG C4 confirmed this ordering actually switches
+            // tracks, whereas enabling without disabling the old did not.
+            tracks[idx].enabled = true;
+            for (let i = 0; i < tracks.length; i++) {
+                if (i !== idx && tracks[i].enabled) tracks[i].enabled = false;
+            }
+            const now = [];
+            for (let i = 0; i < tracks.length; i++) if (tracks[i].enabled) now.push(i);
+            this._nativeAc3Preselected = now.length === 1 && now[0] === idx;
+            log.warn('[Ac3NativeReinitTest] AC3 selected before play()', {
+                phase, idx, previouslyEnabled: old, nowEnabled: now,
+                selected: this._nativeAc3Preselected
+            });
+        } catch (err) {
+            log.warn('[Ac3NativeReinitTest] Early AC3 selection failed', err);
+        }
+    }
+
+    /**
      * Apply the initial audio/subtitle tracks from play options.
      * Called after metadata is loaded and the player is ready to accept track switching.
      *
@@ -1955,6 +2020,16 @@ export class WebOSPlayer {
      * @private
      */
     _applyInitialTracks(options, hls) {
+        if (!hls && options.nativeAc3EarlySelect) {
+            log.warn('[Ac3NativeReinitTest] Early AC3 selection result:', {
+                selected: Boolean(this._nativeAc3Preselected),
+                audioStreamIndex: options.audioStreamIndex,
+                nativeTracks: this._videoElement?.audioTracks?.length ?? null
+            });
+            // Even if WebOS exposes no tracks, do not retry via server remux:
+            // a fallback would invalidate this static-MKV-only experiment.
+            return;
+        }
         log.debug('WebOSPlayer._applyInitialTracks: audio stream', options.audioStreamIndex, '/ list index',
             options.audioTrackListIndex, hls
                 ? `— Hls.js tracks: ${describeAudioTracks(hls.audioTracks)}`
