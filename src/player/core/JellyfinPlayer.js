@@ -100,7 +100,8 @@ import {
 
 import {
     shouldUseProgressiveAudioCopy,
-    applyProgressiveAudioCopy
+    applyProgressiveAudioCopy,
+    getFailedAudioSwitchRestartMode
 } from './WebOSProgressiveAudio.js';
 
 export {
@@ -903,29 +904,37 @@ export class JellyfinPlayer extends EventEmitter {
             if (this._currentPlayOptions && !this._audioRestartInProgress) {
                 const currentTicks = this.getCurrentPositionTicks();
 
-                // Build clean restart options carrying active audio and subtitle tracks
+                // In native webOS Direct Play, a missing video.audioTracks list
+                // requires a server-selected stream. Restarting with explicit
+                // 'remux' bypasses the C4 progressive MKV bitstream-copy path,
+                // sending compressed audio through fMP4 HLS and causing PCM ARC.
+                // Auto + _forceDirectStream instead allows the fresh PlaybackInfo
+                // to select the requested track, followed by A/V stream copy.
+                // Explicit user Remux/Transcode requests and error escalation
+                // keep their respective modes.
+                const restartPlaybackMode = getFailedAudioSwitchRestartMode(
+                    this._backendType,
+                    this._userPlaybackMode,
+                    this._playbackMode
+                );
+                const preferProgressiveAudioCopy =
+                    this._backendType === 'webos' && restartPlaybackMode === 'auto';
                 const restartOptions = {
                     ...this._currentPlayOptions,
                     audioStreamIndex: targetIndex,
                     subtitleStreamIndex: this._currentSubtitleStreamIndex,
                     secondarySubtitleStreamIndex: this._currentSecondarySubtitleStreamIndex,
                     startPositionTicks: currentTicks,
-                    // MUST use 'remux' here — not 'directPlay'.
-                    //
-                    // For DirectPlay (Static=true), Jellyfin streams the raw container
-                    // bytes and completely ignores the AudioStreamIndex query parameter.
-                    // The WebOS pipeline then picks up whatever track the container flags
-                    // as default, ignoring our request.
-                    //
-                    // 'remux' forces DirectStream mode: the server runs ffmpeg to
-                    // rewrap the container, selecting exactly the requested audio track
-                    // and copying the video stream bitstream. The resulting URL will be
-                    // a .m3u8/stream endpoint that actually honours AudioStreamIndex.
-                    //
-                    // If the session was already in transcode mode, keep it there —
-                    // switching to remux would skip necessary codec profile checks.
-                    playbackMode: this._playbackMode === 'transcode' ? 'transcode' : 'remux'
+                    playbackMode: restartPlaybackMode,
+                    _forceDirectStream: preferProgressiveAudioCopy
                 };
+                log.info('[WebOS Audio] Failed native switch restart:', {
+                    selectedIndex: targetIndex,
+                    fromMode: this._playbackMode,
+                    userMode: this._userPlaybackMode,
+                    toMode: restartPlaybackMode,
+                    forceDirectStream: preferProgressiveAudioCopy
+                });
 
                 this._currentPlayOptions = restartOptions;
                 this._lastPlayOptions = restartOptions;
