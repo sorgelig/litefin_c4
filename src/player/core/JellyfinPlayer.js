@@ -19,7 +19,7 @@ import { MoviVideoPlayer } from './MoviVideoPlayer.js';
 import { ExoVideoPlayer } from './ExoVideoPlayer.js';
 import { platformInfo } from '../../utils/PlatformInfo.js';
 import { MediaHelper } from './MediaHelper.js';
-import { buildJellyfinProfile } from '../../api/DeviceProfile.js';
+import { buildJellyfinProfile, getDeviceCapabilities } from '../../api/DeviceProfile.js';
 import { BaseProfile } from '../../api/profiles/BaseProfile.js';
 import SubtitleManager, { DeliveryMethod } from './SubtitleManager.js';
 import { logger } from '../../utils/Logger.js';
