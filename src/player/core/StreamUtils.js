@@ -154,6 +154,13 @@ export function isAudioTrackNativelyPlayable(track, mediaSource = null, backendT
         }
     }
 
+    // Diagnostic: do not let a false browser codec probe veto webOS native
+    // passthrough before the player has actually tried the stream. A currently
+    // transcoded active track was handled above and remains correctly reported.
+    if (backendType === 'webos' && caps?.diagnosticAllAudioPassthrough) {
+        return true;
+    }
+
     // -------------------------------------------------------------------------
     // 3. Maximum Audio Channels Resolution & Constraint Checking
     // -------------------------------------------------------------------------
