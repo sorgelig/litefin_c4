@@ -19,7 +19,7 @@ import { MoviVideoPlayer } from './MoviVideoPlayer.js';
 import { ExoVideoPlayer } from './ExoVideoPlayer.js';
 import { platformInfo } from '../../utils/PlatformInfo.js';
 import { MediaHelper } from './MediaHelper.js';
-import { buildJellyfinProfile } from '../../api/DeviceProfile.js';
+import { buildJellyfinProfile, getDeviceCapabilities } from '../../api/DeviceProfile.js';
 import { BaseProfile } from '../../api/profiles/BaseProfile.js';
 import SubtitleManager, { DeliveryMethod } from './SubtitleManager.js';
 import { logger } from '../../utils/Logger.js';
@@ -2051,8 +2051,11 @@ export class JellyfinPlayer extends EventEmitter {
                     escalated: Boolean(this._directPlayEscalated)
                 });
             }
-            if (shouldUseProgressiveAudioCopy({
+            const c4DeviceModel = this._backendType === 'webos'
+                ? getDeviceCapabilities()?.modelName : null;
+            const c4ProgressiveCopyEligible = shouldUseProgressiveAudioCopy({
                 backendType: this._backendType,
+                deviceModel: c4DeviceModel,
                 userPlaybackMode: this._userPlaybackMode,
                 forceDirectPlay: PlayerSettings.get('forceDirectPlay'),
                 requestedPlaybackMode: options.playbackMode,
@@ -2063,7 +2066,8 @@ export class JellyfinPlayer extends EventEmitter {
                 hasManualBitrate: this._manualBitrate > 0 && this._manualBitrate < 120000000,
                 wasEscalated: this._directPlayEscalated,
                 isLiveTv: options.item?.Type === 'TvChannel'
-            }) && applyProgressiveAudioCopy(
+            });
+            const c4ProgressiveCopyApplied = c4ProgressiveCopyEligible && applyProgressiveAudioCopy(
                 mediaSource,
                 options.audioStreamIndex,
                 options.startPositionTicks || 0,
@@ -2073,7 +2077,18 @@ export class JellyfinPlayer extends EventEmitter {
                     playSessionId: playbackInfo.PlaySessionId,
                     authToken: this.authToken
                 }
-            )) {
+            );
+            if (this._backendType === 'webos' && selectedAudioTrack) {
+                log.info('[WebOS Audio] Progressive A/V copy decision:', {
+                    model: c4DeviceModel,
+                    requestedIndex: options.audioStreamIndex,
+                    eligible: c4ProgressiveCopyEligible,
+                    applied: c4ProgressiveCopyApplied,
+                    output: c4ProgressiveCopyApplied ? 'progressive-mkv-copy' : 'normal-profile',
+                    playMode: this._playbackMode
+                });
+            }
+            if (c4ProgressiveCopyApplied) {
                 log.info('[WebOS Audio] Non-default bitstream track: progressive MKV A/V stream-copy instead of HLS transcoding.');
             }
 
