@@ -24,6 +24,10 @@ const COPY_AUDIO_CODECS = new Set(['ac3', 'eac3', 'dts', 'dca']);
 export function getFailedAudioSwitchRestartMode(backendType, userPlaybackMode, currentPlaybackMode) {
     if (currentPlaybackMode === 'transcode' || userPlaybackMode === 'transcode') return 'transcode';
     if (['remux', 'transcodeAudio', 'transcodeVideo'].includes(userPlaybackMode)) return userPlaybackMode;
+    // Preserve the user's explicit Direct Play selection when native webOS
+    // cannot switch tracks. The progressive MKV copy helper can isolate the
+    // requested AC3 track without routing the restart through HLS.
+    if (backendType === 'webos' && userPlaybackMode === 'directPlay') return 'directPlay';
     if (backendType === 'webos') return 'auto';
     return 'remux';
 }
