@@ -6,6 +6,7 @@ on:
       - experiment/webos-all-audio-passthrough
       - experiment/webos-no-audio-switch-seek
       - experiment/webos-single-enable-audio
+      - experiment/webos-enable-then-disable
   workflow_dispatch:
 
 permissions:
