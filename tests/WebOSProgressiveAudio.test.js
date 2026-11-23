@@ -91,6 +91,7 @@ test('applying progressive URL forces Native DirectStream instead of HLS transco
     assert.equal(applyProgressiveAudioCopy(ms, 3, 33300000000), true);
     assert.match(ms.TranscodingUrl, /\/stream\.mkv\?/);
     assert.equal(ms.TranscodingContainer, 'mkv');
+    assert.equal(ms.TranscodingSubProtocol, null);
     assert.equal(ms._webosProgressiveAudioCopy, true);
     assert.equal(ms.SupportsDirectPlay, false);
     assert.equal(ms.SupportsDirectStream, true);
@@ -183,4 +184,57 @@ test('WebOS failed switch Auto + forceDirectStream reaches progressive AC3 copyi
         audioStreamIndex: 3,
         trackPlayable: true
     }), true);
+});
+
+test('LG C4 proactively copies non-default AC3 stereo and 5.1 even when the codec probe fails', () => {
+    for (const index of [2, 3]) {
+        const ms = source();
+        ms.TranscodingSubProtocol = 'hls';
+        assert.equal(should({
+            deviceModel: 'OLED65C4PUA',
+            audioStreamIndex: index,
+            trackPlayable: false,
+            needsAudioRemux: false,
+            mediaSource: ms
+        }), true, 'C4 must not depend on the webOS codec probe or a previous failed track switch');
+        assert.equal(applyProgressiveAudioCopy(ms, index, 150000000), true);
+        assert.match(ms.TranscodingUrl, /\/stream\.mkv\?/);
+        assert.equal(new URL(ms.TranscodingUrl, 'https://test.invalid').searchParams.get('AudioCodec'), 'copy');
+        assert.equal(new URL(ms.TranscodingUrl, 'https://test.invalid').searchParams.get('AudioStreamIndex'), String(index));
+        assert.equal(ms.TranscodingSubProtocol, null);
+    }
+});
+
+test('non-C4 and unsupported audio codecs do not gain the C4 AC3 probe exemption', () => {
+    assert.equal(should({
+        deviceModel: 'OLED65C3',
+        audioStreamIndex: 2,
+        trackPlayable: false,
+        needsAudioRemux: false
+    }), false);
+    assert.equal(should({
+        deviceModel: 'OLED65C4',
+        audioStreamIndex: 4,
+        trackPlayable: false,
+        needsAudioRemux: false
+    }), false);
+    assert.equal(should({
+        deviceModel: 'OLED65C4',
+        audioStreamIndex: 5,
+        trackPlayable: true,
+        needsAudioRemux: true
+    }), false);
+    assert.equal(should({
+        deviceModel: 'OLED65C4',
+        audioStreamIndex: 1,
+        trackPlayable: true,
+        needsAudioRemux: true
+    }), false);
+    assert.equal(should({
+        deviceModel: 'OLED65C4',
+        audioStreamIndex: 3,
+        trackPlayable: false,
+        needsAudioRemux: false,
+        userPlaybackMode: 'transcode'
+    }), false);
 });
