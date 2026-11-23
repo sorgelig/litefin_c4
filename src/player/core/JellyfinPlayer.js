@@ -2413,6 +2413,16 @@ export class JellyfinPlayer extends EventEmitter {
                 startPositionTicks: streamInfo.playerStartPositionTicks, // Use adjusted start position
                 audioStreamIndex: this._currentAudioStreamIndex,
                 audioTrackListIndex: this._getBackendAudioTrackListIndex(this._currentAudioStreamIndex, mediaSource),
+                // Native AC3 bootstrap is diagnostic only: keeps Static=true
+                // source MKV and attempts audio selection before video.play().
+                nativeAc3EarlySelect: this._backendType === 'webos' &&
+                    playMethod === 'DirectPlay' &&
+                    /^(mkv|matroska)$/i.test(mediaSource.Container || '') &&
+                    (mediaSource.MediaStreams || []).some(st =>
+                        st.Type === 'Audio' &&
+                        Number(st.Index) === Number(this._currentAudioStreamIndex) &&
+                        /^(ac3|eac3)$/i.test(st.Codec || '')),
+                nativeAc3Reload: Boolean(options._nativeAc3ReloadTest),
                 subtitleStreamIndex: this._currentSubtitleStreamIndex,
                 // Tell the backend what play method was negotiated — critical so
                 // TizenAVPlayer knows NOT to apply native track selection when
@@ -3137,7 +3147,17 @@ export class JellyfinPlayer extends EventEmitter {
         const isTranscoding = this._currentPlayMethod === 'Transcode' ||
             this._currentPlayMethod === 'DirectStream' ||
             this._currentPlayMethod === 'Remux';
-        const requiresRestart = isTranscoding || !isTargetCodecSupported || (this._backendType !== 'tizen' && this._backendType !== 'movi' && this._backendType !== 'exoplayer' && !supportsNativeAudio);
+        // Test raw Static=true MKV with a freshly initialized native decoder
+        // when selecting AC3; no remux or transcoding is requested.
+        const nativeAc3ReloadTest = this._backendType === 'webos' &&
+            this._currentPlayMethod === 'DirectPlay' &&
+            /^(mkv|matroska)$/i.test(this._currentMediaSource?.Container || '') &&
+            (this._currentMediaSource?.MediaStreams || []).some(st =>
+                st.Type === 'Audio' && Number(st.Index) === Number(index) &&
+                /^(ac3|eac3)$/i.test(st.Codec || ''));
+        const requiresRestart = nativeAc3ReloadTest || isTranscoding || !isTargetCodecSupported ||
+            (this._backendType !== 'tizen' && this._backendType !== 'movi' &&
+             this._backendType !== 'exoplayer' && !supportsNativeAudio);
 
         log.info(`setAudioStreamIndex: index=${index} playMethod=${this._currentPlayMethod} requiresRestart=${requiresRestart} isTargetCodecSupported=${isTargetCodecSupported}`);
 
@@ -3204,7 +3224,8 @@ export class JellyfinPlayer extends EventEmitter {
                 this._userPlaybackMode === 'transcode' || this._userPlaybackMode === 'remux'
                     ? this._userPlaybackMode
                     : 'auto';
-            const restartPlaybackMode = baseMode === 'transcode' ? 'transcode'
+            const restartPlaybackMode = nativeAc3ReloadTest ? 'directPlay'
+                : baseMode === 'transcode' ? 'transcode'
                 : (!isTargetCodecSupported || needsDirectStreamForAudio) ? 'auto'
                     : baseMode;
 
@@ -3215,8 +3236,15 @@ export class JellyfinPlayer extends EventEmitter {
                 secondarySubtitleStreamIndex: this._currentSecondarySubtitleStreamIndex,
                 startPositionTicks: currentTicks,
                 playbackMode: restartPlaybackMode,
-                _forceDirectStream: needsDirectStreamForAudio
+                _forceDirectStream: nativeAc3ReloadTest ? false : needsDirectStreamForAudio,
+                _nativeAc3ReloadTest: nativeAc3ReloadTest
             };
+            if (nativeAc3ReloadTest) {
+                log.warn('[Ac3NativeReinitTest] Reloading original static MKV on new video element at existing timestamp:', {
+                    audioStreamIndex: index, startPositionTicks: currentTicks,
+                    transport: 'original-MKV-Static=true', playbackMode: restartPlaybackMode
+                });
+            }
 
             // Persist so future restarts (bitrate change, etc.) carry the right track
             this._currentPlayOptions = restartOptions;
