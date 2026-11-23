@@ -181,8 +181,8 @@ const DEFAULTS = {
     //             on the 5.1 layout. Best for older receivers.
     //   'aac'   — Advanced Audio Coding: stereo/multichannel, universal browser
     //   'auto'        — Auto (Prefer E-AC3): defaults to EAC3 if supported/allowed, fallback to AC3 then AAC.
-    //   'prefer_dts' — Experimental DTS (fMP4 HLS only), AC3/AAC fallback, webOS.
-    //   'force_dts'  — Experimental DTS only (fMP4 HLS only), webOS.
+    //   'prefer_dts' — Copy existing DTS in fMP4 HLS; AC3/AAC for non-DTS sources, webOS.
+    //   'force_dts'  — Copy existing DTS in fMP4 HLS; AC3 for non-DTS sources, webOS.
     //   'prefer_ac3'  — Prefer AC3: uses AC3 first, with AAC fallback.
     //   'prefer_aac'  — Prefer AAC.
     //   'force_eac3'  — Force/Only E-AC3.
