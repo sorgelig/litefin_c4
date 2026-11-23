@@ -21,10 +21,12 @@ import { platformInfo } from '../../utils/PlatformInfo.js';
 import { MediaHelper } from './MediaHelper.js';
 import {
     isDolbyTrack,
-    shouldUseDolbyProgressiveCopy,
-    applyDolbyProgressiveCopy,
     shouldRestartDolbyProgressiveSeek
 } from './WebOSDolbyProgressiveTest.js';
+import {
+    shouldUseDolbyTsHlsCopy,
+    applyDolbyTsHlsCopy
+} from './WebOSDolbyTsHlsTest.js';
 import { buildJellyfinProfile, getDeviceCapabilities } from '../../api/DeviceProfile.js';
 import { BaseProfile } from '../../api/profiles/BaseProfile.js';
 import SubtitleManager, { DeliveryMethod } from './SubtitleManager.js';
@@ -1985,10 +1987,10 @@ export class JellyfinPlayer extends EventEmitter {
                 throw new Error('Media source not found');
             }
 
-            // A/B diagnostic: leave DTS and other formats on Litefin's regular
-            // transport. For AC3/EAC3 in MKV, ask Jellyfin for a progressive
-            // MKV with -c:v copy and -c:a copy, then use native WebOSPlayer.
-            const useDolbyCopy = shouldUseDolbyProgressiveCopy({
+            // A/B diagnostic: retain normal DTS, but route AC3/EAC3 to native
+            // MPEG-TS HLS with video/audio copy. This supersedes the proven
+            // progressive MKV route, testing HLS's faster indexed seeking.
+            const useDolbyCopy = shouldUseDolbyTsHlsCopy({
                 backendType: this._backendType,
                 mediaSource,
                 audioStreamIndex: options.audioStreamIndex,
@@ -1999,7 +2001,7 @@ export class JellyfinPlayer extends EventEmitter {
                 escalated: this._directPlayEscalated
             });
             const wasHls = Boolean(mediaSource.TranscodingUrl?.includes('.m3u8'));
-            const didDolbyCopy = useDolbyCopy && applyDolbyProgressiveCopy(mediaSource, {
+            const didDolbyCopy = useDolbyCopy && applyDolbyTsHlsCopy(mediaSource, {
                 itemId: options.itemId,
                 playSessionId: playbackInfo.PlaySessionId,
                 authToken: this.authToken,
@@ -2013,10 +2015,10 @@ export class JellyfinPlayer extends EventEmitter {
                     )?.Codec,
                     audioStreamIndex: options.audioStreamIndex,
                     originalServerHls: wasHls,
-                    progressiveCopyEligible: useDolbyCopy,
-                    progressiveCopyApplied: didDolbyCopy,
-                    transport: didDolbyCopy ? 'progressive-mkv-video-audio-copy' : 'upstream',
-                    urlPath: didDolbyCopy ? '/Videos/.../stream.mkv' : '(unchanged)'
+                    dolbyTsHlsEligible: useDolbyCopy,
+                    dolbyTsHlsApplied: didDolbyCopy,
+                    transport: didDolbyCopy ? 'native-ts-hls-video-audio-copy' : 'upstream',
+                    urlPath: didDolbyCopy ? '/Videos/.../master.m3u8 (TS segments)' : '(unchanged)'
                 });
             }
 
@@ -3228,7 +3230,7 @@ export class JellyfinPlayer extends EventEmitter {
             this._currentPlayMethod === 'DirectStream' ||
             this._currentPlayMethod === 'Remux';
         // Testing a different transport, not an in-place track-toggle:
-        // selecting any AC3/EAC3 track must restart into stream.mkv, including
+        // selecting any AC3/EAC3 track must restart as native TS-HLS, including
         // a physical default track or a track selected while DTS is playing.
         const selectedDolbyForCopy = this._backendType === 'webos' &&
             isDolbyTrack(this._currentMediaSource, index);
