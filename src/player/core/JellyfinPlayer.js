@@ -22,7 +22,8 @@ import { MediaHelper } from './MediaHelper.js';
 import {
     isDolbyTrack,
     shouldUseDolbyProgressiveCopy,
-    applyDolbyProgressiveCopy
+    applyDolbyProgressiveCopy,
+    shouldRestartDolbyProgressiveSeek
 } from './WebOSDolbyProgressiveTest.js';
 import { buildJellyfinProfile, getDeviceCapabilities } from '../../api/DeviceProfile.js';
 import { BaseProfile } from '../../api/profiles/BaseProfile.js';
@@ -295,6 +296,7 @@ export class JellyfinPlayer extends EventEmitter {
 
         this._transcodingOffsetTicks = 0; // Offset for transcoded streams that start at 0
         this._pendingStartPositionTicks = null; // Target position before first frame
+        this._progressiveSeekPositionTicks = null; // Keep OSD time steady while progressive DD seek restarts
         this._resumeLastTime = null; // Last landed position while waiting for a resume to advance
         this._resumeAdvanceTimer = null; // Limit on that wait
         this._isSeeking = false; // Track seeking state to suppress loading screens during seek
@@ -2956,6 +2958,7 @@ export class JellyfinPlayer extends EventEmitter {
         // Only clear state if NOT restarting
         if (!isRestartStop) {
             this._pendingStartPositionTicks = null;
+            this._progressiveSeekPositionTicks = null;
             this._clearRemuxStuckWatchdog();
             this._currentItem = null;
             this._currentMediaSource = null;
@@ -3034,7 +3037,54 @@ export class JellyfinPlayer extends EventEmitter {
             this._subtitleManager.resetActiveCues();
         }
 
-        // Delegate the core seek execution to our underlying player backend (AVPlay, HTML5, WebOS)
+        // An FFmpeg-generated progressive MKV carries no usable seek index for
+        // the C4 native demuxer. A video.currentTime seek can briefly play from
+        // the old position, roll backward, and then freeze. Restart the native
+        // playback session at the new absolute server StartTimeTicks instead.
+        // This preserves AC3/EAC3 stream copy and avoids HLS fallback.
+        if (shouldRestartDolbyProgressiveSeek(
+            this._backendType, this._currentMediaSource, this._currentPlayOptions
+        )) {
+            const restartOptions = {
+                ...this._currentPlayOptions,
+                audioStreamIndex: this._currentAudioStreamIndex,
+                subtitleStreamIndex: this._currentSubtitleStreamIndex,
+                secondarySubtitleStreamIndex: this._currentSecondarySubtitleStreamIndex,
+                startPositionTicks: positionTicks,
+                playbackMode: this._userPlaybackMode === 'directPlay'
+                    ? 'directPlay' : this._playbackMode,
+                _forceDirectStream: true,
+                autoPlay: this._isPaused ? false : this._currentPlayOptions.autoPlay
+            };
+            log.warn('[DolbyProgressiveSeek] Native MKV has no seek index; starting new stream-copy session at', {
+                positionTicks, audioStreamIndex: restartOptions.audioStreamIndex
+            });
+            this._currentPlayOptions = restartOptions;
+            this._lastPlayOptions = restartOptions;
+            this._progressiveSeekPositionTicks = positionTicks;
+            this._isRestarting = true;
+            this._restartOwner = restartOptions;
+            this.emit(PlayerEvent.RESTARTING);
+            // Asynchronous stop/play is controlled by _restartOwner to avoid
+            // obsolete restarts taking over after a newer request or Stop.
+            (async () => {
+                try {
+                    await this.stop({ restart: true });
+                    await this._playAfterRestartPause(restartOptions, 0);
+                } catch (error) {
+                    log.error('[DolbyProgressiveSeek] Server-side seek restart failed:', error);
+                } finally {
+                    if (this._restartOwner === restartOptions) {
+                        this._isRestarting = false;
+                        this._progressiveSeekPositionTicks = null;
+                    }
+                }
+            })();
+            this.emit('seek', { positionTicks });
+            return;
+        }
+
+        // Other playback transports retain their native seeks.
         this._backend?.seek(positionTicks, options);
 
         // Notify all registered UI/OSD event listeners that seek has successfully fired
@@ -4375,6 +4425,9 @@ export class JellyfinPlayer extends EventEmitter {
      * @returns {number}
      */
     getCurrentPositionTicks() {
+        if (this._isRestarting && this._progressiveSeekPositionTicks != null) {
+            return this._progressiveSeekPositionTicks;
+        }
         if (this._isSeeking && this._seekTargetTicks !== null) {
             return this._seekTargetTicks;
         }
@@ -4399,6 +4452,12 @@ export class JellyfinPlayer extends EventEmitter {
      * @returns {number}
      */
     getCurrentPositionMs() {
+        if (this._isRestarting && this._progressiveSeekPositionTicks != null) {
+            return this._progressiveSeekPositionTicks / 10000;
+        }
+        if (this._isSeeking && this._seekTargetTicks != null) {
+            return this._seekTargetTicks / 10000;
+        }
         // A progressive transcode started at an offset reports time from 0;
         // seek() takes media positions, like getCurrentPositionTicks() returns
         const backendMs = (this._backend?.getCurrentTime() ?? 0) * 1000;
