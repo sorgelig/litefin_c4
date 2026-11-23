@@ -13,6 +13,22 @@
 
 const COPY_AUDIO_CODECS = new Set(['ac3', 'eac3', 'dts', 'dca']);
 
+/**
+ * When the native webOS audioTracks API fails, restarting as explicit 'remux'
+ * bypasses the non-default audio passthrough path and selects fMP4 HLS.
+ * Use Auto + _forceDirectStream instead, so the client can select the
+ * progressive stream-copy path after getting fresh PlaybackInfo.
+ *
+ * Preserve explicit transcoding/remux settings and the earlier fallback stage.
+ */
+export function getFailedAudioSwitchRestartMode(backendType, userPlaybackMode, currentPlaybackMode) {
+    if (currentPlaybackMode === 'transcode' || userPlaybackMode === 'transcode') return 'transcode';
+    if (['remux', 'transcodeAudio', 'transcodeVideo'].includes(userPlaybackMode)) return userPlaybackMode;
+    if (backendType === 'webos') return 'auto';
+    return 'remux';
+}
+
+
 export function shouldUseProgressiveAudioCopy({
     backendType,
     userPlaybackMode,
