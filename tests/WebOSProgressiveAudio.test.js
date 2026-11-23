@@ -85,6 +85,7 @@ test('applying progressive URL forces Native DirectStream instead of HLS transco
     assert.equal(applyProgressiveAudioCopy(ms, 3, 33300000000), true);
     assert.match(ms.TranscodingUrl, /\/stream\.mkv\?/);
     assert.equal(ms.TranscodingContainer, 'mkv');
+    assert.equal(ms._webosProgressiveAudioCopy, true);
     assert.equal(ms.SupportsDirectPlay, false);
     assert.equal(ms.SupportsDirectStream, true);
     assert.equal(ms.TranscodingInfo.IsVideoDirect, true);
