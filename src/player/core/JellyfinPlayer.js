@@ -19,7 +19,7 @@ import { MoviVideoPlayer } from './MoviVideoPlayer.js';
 import { ExoVideoPlayer } from './ExoVideoPlayer.js';
 import { platformInfo } from '../../utils/PlatformInfo.js';
 import { MediaHelper } from './MediaHelper.js';
-import { buildJellyfinProfile } from '../../api/DeviceProfile.js';
+import { buildJellyfinProfile, getDeviceCapabilities } from '../../api/DeviceProfile.js';
 import { BaseProfile } from '../../api/profiles/BaseProfile.js';
 import SubtitleManager, { DeliveryMethod } from './SubtitleManager.js';
 import { logger } from '../../utils/Logger.js';
@@ -91,6 +91,18 @@ import {
     hasContainerWithoutAudioTracks,
     doesAudioTrackRequireDirectStream
 } from './StreamUtils.js';
+
+import {
+    getRequestedAudioCodec,
+    preferNativeDtsAuto,
+    setDtsHlsTranscodeBitrate
+} from './WebOSDtsPolicy.js';
+
+import {
+    shouldUseProgressiveAudioCopy,
+    applyProgressiveAudioCopy,
+    getFailedAudioSwitchRestartMode
+} from './WebOSProgressiveAudio.js';
 
 export {
     isTrueHdSupported,
@@ -892,29 +904,39 @@ export class JellyfinPlayer extends EventEmitter {
             if (this._currentPlayOptions && !this._audioRestartInProgress) {
                 const currentTicks = this.getCurrentPositionTicks();
 
-                // Build clean restart options carrying active audio and subtitle tracks
+                // In native webOS Direct Play, a missing video.audioTracks list
+                // requires a server-selected stream. Restarting with explicit
+                // 'remux' bypasses the C4 progressive MKV bitstream-copy path,
+                // sending compressed audio through fMP4 HLS and causing PCM ARC.
+                // Preserve an explicit user Direct Play choice. The C4 can
+                // isolate the selected AC3 track via progressive MKV copy;
+                // switching the internal mode to Auto here loses the choice
+                // and can route later switches back through DTS HLS.
+                // Explicit Remux/Transcode choices and escalations stay intact.
+                const restartPlaybackMode = getFailedAudioSwitchRestartMode(
+                    this._backendType,
+                    this._userPlaybackMode,
+                    this._playbackMode
+                );
+                const preferProgressiveAudioCopy =
+                    this._backendType === 'webos' &&
+                    (restartPlaybackMode === 'auto' || restartPlaybackMode === 'directPlay');
                 const restartOptions = {
                     ...this._currentPlayOptions,
                     audioStreamIndex: targetIndex,
                     subtitleStreamIndex: this._currentSubtitleStreamIndex,
                     secondarySubtitleStreamIndex: this._currentSecondarySubtitleStreamIndex,
                     startPositionTicks: currentTicks,
-                    // MUST use 'remux' here — not 'directPlay'.
-                    //
-                    // For DirectPlay (Static=true), Jellyfin streams the raw container
-                    // bytes and completely ignores the AudioStreamIndex query parameter.
-                    // The WebOS pipeline then picks up whatever track the container flags
-                    // as default, ignoring our request.
-                    //
-                    // 'remux' forces DirectStream mode: the server runs ffmpeg to
-                    // rewrap the container, selecting exactly the requested audio track
-                    // and copying the video stream bitstream. The resulting URL will be
-                    // a .m3u8/stream endpoint that actually honours AudioStreamIndex.
-                    //
-                    // If the session was already in transcode mode, keep it there —
-                    // switching to remux would skip necessary codec profile checks.
-                    playbackMode: this._playbackMode === 'transcode' ? 'transcode' : 'remux'
+                    playbackMode: restartPlaybackMode,
+                    _forceDirectStream: preferProgressiveAudioCopy
                 };
+                log.info('[WebOS Audio] Failed native switch restart:', {
+                    selectedIndex: targetIndex,
+                    fromMode: this._playbackMode,
+                    userMode: this._userPlaybackMode,
+                    toMode: restartPlaybackMode,
+                    forceDirectStream: preferProgressiveAudioCopy
+                });
 
                 this._currentPlayOptions = restartOptions;
                 this._lastPlayOptions = restartOptions;
@@ -1894,9 +1916,23 @@ export class JellyfinPlayer extends EventEmitter {
                 ? doesAudioTrackRequireDirectStream(activeMs, options.audioStreamIndex, this._backendType)
                 : false;
 
+            // DTS passthrough on the C4 is known to work over native Direct Play.
+            // In Auto mode, a cached missing audioTracks list must not force a
+            // remux through HLS, which can lose the DTS bitstream.
+            const nativeDtsAuto = preferNativeDtsAuto({
+                backendType: this._backendType,
+                dtsSupported: isDtsSupported(),
+                selectedCodec: getRequestedAudioCodec(options),
+                playbackMode: this._playbackMode,
+                forceTranscode: PlayerSettings.get('forceTranscode'),
+                hasManualBitrate: this._manualBitrate > 0 && this._manualBitrate < 120000000
+            });
             const needsDirectStreamForAudio = options._forceDirectStream ||
-                trackRequiresDirectStream ||
+                (trackRequiresDirectStream && !nativeDtsAuto) ||
                 (isHtml5Backend && !supportsNativeAudio && (isCustomAudioTrack || !isFirstAudioTrack));
+            if (trackRequiresDirectStream && nativeDtsAuto) {
+                log.info('[C4 DTS] Auto: bypassing audio remux; prefer native Direct Play.');
+            }
 
             // Determine effective playback mode for profiling
             let profilePlaybackMode = this._playbackMode;
@@ -1976,6 +2012,98 @@ export class JellyfinPlayer extends EventEmitter {
             if (!mediaSource) {
                 log.error('Media source selection failed');
                 throw new Error('Media source not found');
+            }
+
+            // Native webOS cannot reliably select non-default MKV audio tracks
+            // when video.audioTracks is empty. In Direct Play mode the normal
+            // HLS/remux path re-encodes AC3 as the selected audio transcode
+            // codec (DTS) and the LG then emits PCM over ARC. Instead, build a
+            // progressive MKV remux using -c:v copy -c:a copy so the chosen
+            // track reaches the TV's native hardware bitstream path unchanged.
+            // Never touch the default track, unsupported codecs, other players
+            // or explicit transcoding. Existing error-to-transcode fallback
+            // remains active if this progressive remux isn't supported.
+            const selectedAudioTrack = mediaSource.MediaStreams?.find(
+                (track) => track.Type === 'Audio' &&
+                    Number(track.Index) === Number(options.audioStreamIndex)
+            );
+            // Evaluate original codec/hardware compatibility, not the CURRENT
+            // HLS session. isAudioTrackNativelyPlayable() deliberately returns
+            // false for a track whose TranscodingUrl is already re-encoding it.
+            // Feeding that session back into our copy-path check makes the
+            // decision circular and blocks AC3 bitstream copy every time.
+            const originalCapabilitySource = {
+                ...(activeMs || mediaSource),
+                TranscodingUrl: null,
+                TranscodingInfo: null
+            };
+            const originalTrackPlayable = selectedAudioTrack
+                ? isAudioTrackNativelyPlayable(
+                    selectedAudioTrack, originalCapabilitySource, this._backendType
+                )
+                : false;
+            if (this._backendType === 'webos' && selectedAudioTrack) {
+                log.info('[WebOS Audio] Copy eligibility:', {
+                    codec: selectedAudioTrack.Codec,
+                    index: selectedAudioTrack.Index,
+                    playable: originalTrackPlayable,
+                    needsAudioRemux: Boolean(needsDirectStreamForAudio),
+                    userMode: this._userPlaybackMode,
+                    requestMode: options.playbackMode,
+                    escalated: Boolean(this._directPlayEscalated)
+                });
+            }
+            const c4DeviceModel = this._backendType === 'webos'
+                ? getDeviceCapabilities()?.modelName : null;
+            const c4ProgressiveCopyEligible = shouldUseProgressiveAudioCopy({
+                backendType: this._backendType,
+                deviceModel: c4DeviceModel,
+                userPlaybackMode: this._userPlaybackMode,
+                forceDirectPlay: PlayerSettings.get('forceDirectPlay'),
+                requestedPlaybackMode: options.playbackMode,
+                mediaSource,
+                audioStreamIndex: options.audioStreamIndex,
+                needsAudioRemux: needsDirectStreamForAudio,
+                trackPlayable: originalTrackPlayable,
+                hasManualBitrate: this._manualBitrate > 0 && this._manualBitrate < 120000000,
+                wasEscalated: this._directPlayEscalated,
+                isLiveTv: options.item?.Type === 'TvChannel'
+            });
+            const c4ProgressiveCopyApplied = c4ProgressiveCopyEligible && applyProgressiveAudioCopy(
+                mediaSource,
+                options.audioStreamIndex,
+                options.startPositionTicks || 0,
+                {
+                    itemId: options.itemId,
+                    mediaSourceId: mediaSource.Id,
+                    playSessionId: playbackInfo.PlaySessionId,
+                    authToken: this.authToken
+                }
+            );
+            if (this._backendType === 'webos' && selectedAudioTrack) {
+                log.info('[WebOS Audio] Progressive A/V copy decision:', {
+                    model: c4DeviceModel,
+                    requestedIndex: options.audioStreamIndex,
+                    eligible: c4ProgressiveCopyEligible,
+                    applied: c4ProgressiveCopyApplied,
+                    output: c4ProgressiveCopyApplied ? 'progressive-mkv-copy' : 'normal-profile',
+                    playMode: this._playbackMode
+                });
+            }
+            if (c4ProgressiveCopyApplied) {
+                log.info('[WebOS Audio] Non-default bitstream track: progressive MKV A/V stream-copy instead of HLS transcoding.');
+            }
+
+            // Jellyfin's StreamBuilder chooses 192 kbps for DTS because its
+            // default-bitrate table does not have a DTS entry. FFmpeg dca rejects
+            // that bitrate for 5.1. Rewrite only DTS HLS transcoding URLs to
+            // request the standard 1536 kbps DTS core bitrate; never alter
+            // DirectPlay/AC3/EAC3/AAC audio paths.
+            if (platformInfo.isWebOS &&
+                (PlayerSettings.get('transcodeAudioCodec') === 'force_dts' ||
+                 PlayerSettings.get('transcodeAudioCodec') === 'prefer_dts') &&
+                setDtsHlsTranscodeBitrate(mediaSource)) {
+                log.info('[C4 DTS] Corrected HLS transcode AudioBitrate to 1536000 bps for FFmpeg dca.');
             }
 
             if (mediaSource.TranscodingInfo) {
@@ -2882,6 +3010,7 @@ export class JellyfinPlayer extends EventEmitter {
         // Only clear state if NOT restarting
         if (!isRestartStop) {
             this._pendingStartPositionTicks = null;
+            this._progressiveSeekPositionTicks = null;
             this._clearRemuxStuckWatchdog();
             this._currentItem = null;
             this._currentMediaSource = null;
@@ -2960,7 +3089,58 @@ export class JellyfinPlayer extends EventEmitter {
             this._subtitleManager.resetActiveCues();
         }
 
-        // Delegate the core seek execution to our underlying player backend (AVPlay, HTML5, WebOS)
+        // Jellyfin's progressive /stream.mkv endpoint starts FFmpeg at
+        // StartTimeTicks, but the resulting stream has no reliable random-access
+        // index in the C4 native demuxer. video.currentTime seeks can silently
+        // snap back to the former position. Open a new stream at the absolute
+        // target instead; the existing transcodingOffsetTicks maps its 0-based
+        // timestamps back onto the media timeline.
+        if (this._backendType === 'webos' &&
+            this._currentMediaSource?._webosProgressiveAudioCopy &&
+            this._currentPlayOptions) {
+            const restartOptions = {
+                ...this._currentPlayOptions,
+                audioStreamIndex: this._currentAudioStreamIndex,
+                subtitleStreamIndex: this._currentSubtitleStreamIndex,
+                secondarySubtitleStreamIndex: this._currentSecondarySubtitleStreamIndex,
+                startPositionTicks: positionTicks,
+                playbackMode: this._userPlaybackMode === 'directPlay'
+                    ? 'directPlay' : this._playbackMode,
+                _forceDirectStream: true,
+                autoPlay: this._isPaused ? false : this._currentPlayOptions.autoPlay
+            };
+            log.info('[WebOS Audio] Progressive MKV seek: restarting A/V copy at', positionTicks,
+                'ticks, track', restartOptions.audioStreamIndex);
+            this._currentPlayOptions = restartOptions;
+            this._lastPlayOptions = restartOptions;
+            // Keep the absolute requested time visible during the stream reload;
+            // stop() and the old decoder can otherwise briefly report the old
+            // position, making the OSD look as if the seek bounced backward.
+            this._progressiveSeekPositionTicks = positionTicks;
+            this._isRestarting = true;
+            this._restartOwner = restartOptions;
+            this.emit(PlayerEvent.RESTARTING);
+            // No fixed pause for the native webOS backend. The restart owner
+            // and play request token prevent an obsolete seek from loading
+            // after a newer one or after the user leaves playback.
+            (async () => {
+                try {
+                    await this.stop({ restart: true });
+                    await this._playAfterRestartPause(restartOptions, 0);
+                } catch (error) {
+                    log.error('[WebOS Audio] Progressive MKV seek restart failed:', error);
+                } finally {
+                    if (this._restartOwner === restartOptions) {
+                        this._isRestarting = false;
+                        this._progressiveSeekPositionTicks = null;
+                    }
+                }
+            })();
+            this.emit('seek', { positionTicks });
+            return;
+        }
+
+        // Other playback transports retain their native seeks.
         this._backend?.seek(positionTicks, options);
 
         // Notify all registered UI/OSD event listeners that seek has successfully fired
@@ -3157,8 +3337,9 @@ export class JellyfinPlayer extends EventEmitter {
             // ────────────────────────────────────────────────────────────────
             // Calculate Restart Playback Mode
             // ────────────────────────────────────────────────────────────────
-            // - If the user's mode is explicitly a forced mode
-            //   ('transcode' or 'remux'), we preserve it.
+            // - Preserve explicitly selected Direct Play on webOS as well as
+            //   explicit Remux/Transcode. A non-default AC3 track can use
+            //   the progressive MKV bitstream-copy path in Direct Play mode.
             // - Otherwise, we default to 'auto' to let the server decide.
             // - If the target codec is unsupported or audio requires remux,
             //   we ensure 'auto' mode so CodecProfiles / DirectStream profiles
@@ -3166,13 +3347,24 @@ export class JellyfinPlayer extends EventEmitter {
             // - If the target track can DirectPlay natively, we revert to the
             //   user's playback mode (allowing return to DirectPlay).
             // ────────────────────────────────────────────────────────────────
+            const preserveExplicitDirectPlay =
+                this._backendType === 'webos' &&
+                this._userPlaybackMode === 'directPlay' &&
+                this._playbackMode !== 'transcode' && !this._directPlayEscalated;
             const baseMode =
                 this._userPlaybackMode === 'transcode' || this._userPlaybackMode === 'remux'
                     ? this._userPlaybackMode
-                    : 'auto';
-            const restartPlaybackMode = baseMode === 'transcode' ? 'transcode'
+                    : preserveExplicitDirectPlay ? 'directPlay' : 'auto';
+            const restartPlaybackMode = baseMode === 'transcode' || baseMode === 'directPlay'
+                ? baseMode
                 : (!isTargetCodecSupported || needsDirectStreamForAudio) ? 'auto'
                     : baseMode;
+            log.info('[WebOS Audio] Track-switch playback mode:', {
+                requested: this._userPlaybackMode,
+                previous: this._playbackMode,
+                restart: restartPlaybackMode,
+                directPlayPreserved: preserveExplicitDirectPlay
+            });
 
             const restartOptions = {
                 ...this._currentPlayOptions,
@@ -4294,6 +4486,9 @@ export class JellyfinPlayer extends EventEmitter {
      * @returns {number}
      */
     getCurrentPositionTicks() {
+        if (this._isRestarting && this._progressiveSeekPositionTicks != null) {
+            return this._progressiveSeekPositionTicks;
+        }
         if (this._isSeeking && this._seekTargetTicks !== null) {
             return this._seekTargetTicks;
         }
@@ -4318,6 +4513,14 @@ export class JellyfinPlayer extends EventEmitter {
      * @returns {number}
      */
     getCurrentPositionMs() {
+        if (this._isRestarting && this._progressiveSeekPositionTicks != null) {
+            return this._progressiveSeekPositionTicks / 10000;
+        }
+        // Repeated relative seeks should advance from the pending target rather
+        // than from the previous stream position while a seek/restart is pending.
+        if (this._isSeeking && this._seekTargetTicks != null) {
+            return this._seekTargetTicks / 10000;
+        }
         // A progressive transcode started at an offset reports time from 0;
         // seek() takes media positions, like getCurrentPositionTicks() returns
         const backendMs = (this._backend?.getCurrentTime() ?? 0) * 1000;
@@ -4552,13 +4755,25 @@ export class JellyfinPlayer extends EventEmitter {
         // Read max bitrate: priority to deviceProfile if passed (it contains the logic)
         // Fallback to manualBitrate or 120Mbps
         const maxBitrate = deviceProfile?.MaxStreamingBitrate || manualBitrate || 120000000;
+        const requestedAudioCodec = getRequestedAudioCodec(options);
+        const nativeDtsAuto = preferNativeDtsAuto({
+            backendType: this._backendType,
+            dtsSupported: isDtsSupported(),
+            selectedCodec: requestedAudioCodec,
+            playbackMode: options.playbackMode && options.playbackMode !== 'auto'
+                ? options.playbackMode : this._playbackMode || 'auto',
+            forceTranscode: PlayerSettings.get('forceTranscode'),
+            hasManualBitrate: typeof manualBitrate === 'number' && manualBitrate > 0 && manualBitrate < 120000000
+        });
 
         // ---------------------------------------------------------------------
         // Check for Zero-Latency Prewarmed PlaybackInfo
         // ---------------------------------------------------------------------
         // The prewarm is only reused when it was requested with the same
         // bitrate limit (a quality change in the OSD lowers it)
-        const prewarmedPromise = prewarmManager.consumePlaybackInfo(options.itemId, {
+        // A cached prewarm may contain an HLS URL from a non-DTS profile.
+        // Request fresh playback info for the C4's native DTS direct play.
+        const prewarmedPromise = nativeDtsAuto ? null : prewarmManager.consumePlaybackInfo(options.itemId, {
             ...options,
             maxStreamingBitrate: maxBitrate
         });
@@ -4728,6 +4943,11 @@ export class JellyfinPlayer extends EventEmitter {
             // Manual bitrate cap requires transcoding
             currentMode = 'transcode';
             log.info(`[PlaybackMode] Manual bitrate limit active (${manualBitrate} bps): using transcode mode`);
+        } else if (nativeDtsAuto) {
+            // Same policy as the confirmed working "Force A/V Direct Play
+            // with fallback", but only for DTS on native webOS Auto mode.
+            currentMode = 'directPlay';
+            log.info('[C4 DTS] Auto: native DTS Direct Play with playback-error fallback.');
         } else {
             // Default policy from global user settings
             const forceTranscodeSetting = PlayerSettings.get('forceTranscode');
@@ -5150,26 +5370,35 @@ export class JellyfinPlayer extends EventEmitter {
         // ----------------------------------------------------------------
         if (!['auto', 'directPlay', 'transcode', 'remux', 'transcodeVideo', 'transcodeAudio'].includes(mode)) return;
 
-        // The Playback Mode menu shows getPlaybackMode(): confirming that one
-        // changes nothing (an item remuxed for its audio track would only be
-        // restarted into the same remux)
-        if (mode === this.getPlaybackMode()) return;
+        // getPlaybackMode() is the remembered user choice, which can differ
+        // from the current item's effective mode after a track switch/fallback.
+        // Re-selecting the same menu entry must restore the requested mode.
+        // Also permit explicit Direct Play retry if the active backend fell
+        // back to transcoding without changing _playbackMode.
+        const isActive = this._isPlaying || this._isPaused || this._state === 'buffering';
+        const activeDirectPlayRoute = this._currentPlayMethod === 'DirectPlay' ||
+            Boolean(this._currentMediaSource?._webosProgressiveAudioCopy);
+        const retryDirectPlay = mode === 'directPlay' && isActive && !activeDirectPlayRoute;
+        if (mode === this.getPlaybackMode() && this._playbackMode === mode && !retryDirectPlay) return;
 
         // A mode picked here is the user's, also for the next items, and replaces
         // the mode a restart of the item fell back to
         this._userPlaybackMode = mode;
         this._itemFallbackMode = null;
+        // User-requested mode changes/retries clear an old decoder fallback
+        // so the fresh PlaybackInfo may attempt bitstream copying again.
+        this._directPlayEscalated = false;
 
         // The item may already play in it (the remux play() chose for its
         // audio track, the transcode a failed direct play fell back to)
-        if (this._playbackMode === mode) return;
+        if (this._playbackMode === mode && !retryDirectPlay) return;
 
         this._playbackMode = mode;
         log.info(`Playback mode set to: ${mode}`);
 
         // Re-initialize playback if active
         // Check for specific backend states that imply activity
-        if (this._isPlaying || this._isPaused || this._state === 'buffering') {
+        if (isActive) {
             log.info('Restarting playback to apply new mode');
 
             if (this._lastPlayOptions) {

@@ -1,0 +1,37 @@
+name: Build Litefin C4 (webOS Modern)
+
+on:
+  push:
+    branches:
+      - feat/webos-c4-dts
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-webos-modern:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+      - name: Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Test C4 DTS playback profiles
+        run: node --test tests/WebOSC4DtsProfile.test.js tests/WebOSDtsPolicy.test.js tests/WebOSProgressiveAudio.test.js tests/WebOSC4AudioModeSwitch.test.js tests/WebOSC4ProgressiveSeek.test.js
+      - name: Prepare package signing directory
+        run: mkdir -p .sign
+      - name: Build webOS Modern IPK
+        run: npm run package:webos-modern
+      - name: Upload installable webOS package
+        uses: actions/upload-artifact@v4
+        with:
+          name: Litefin-C4-webOS-Modern
+          path: Litefin-*-webOS-Modern.ipk
+          if-no-files-found: error
+          retention-days: 30

@@ -1957,6 +1957,15 @@ export class WebOSPlayer {
                 ? `— Hls.js tracks: ${describeAudioTracks(hls.audioTracks)}`
                 : `— native tracks: ${describeAudioTracks(this._videoElement && this._videoElement.audioTracks)}`);
 
+        // Jellyfin already isolated the requested non-default audio track in
+        // a progressive MKV remux (video/audio stream-copy). The output only
+        // contains that one audio track, so comparing it against the original
+        // MKV's physical default would spuriously trigger an endless restart.
+        if (!hls && options.mediaSource?._webosProgressiveAudioCopy) {
+            log.info('WebOSPlayer: progressive MKV audio-copy stream has requested track already; skipping native selection.');
+            return;
+        }
+
         // ---- Audio track ----
         if (options.audioStreamIndex !== undefined && options.audioStreamIndex !== null) {
             // JellyfinPlayer precomputes the backend-visible list index because
