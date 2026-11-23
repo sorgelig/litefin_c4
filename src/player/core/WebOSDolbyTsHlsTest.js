@@ -1,5 +1,5 @@
 /**
- * Diagnostic: native webOS HLS with MPEG-TS segments and copied AC3/EAC3.
+ * Diagnostic: native webOS HLS with keyframe-aligned MPEG-TS and copied AC3/EAC3.
  * Only applied to local MKV Dolby audio, keeping DTS on Litefin's normal path.
  * In particular, this overrides force-fMP4 for these Dolby test tracks.
  *
@@ -53,9 +53,12 @@ export function buildDolbyTsHlsUrl({
     url.searchParams.set('AllowVideoStreamCopy', 'true');
     url.searchParams.set('AllowAudioStreamCopy', 'true');
     url.searchParams.set('AudioStreamIndex', String(audioStreamIndex));
-    // As in Jellyfin's "Use shorter HLS segments" option. Actual segment
-    // cuts remain limited by existing source-video keyframes with video copy.
-    url.searchParams.set('SegmentLength', '1');
+    // EXPERIMENT 2.10.4: do not force 1-second HLS segments with copied
+    // video. A stream-copied source has fixed GOP/IDR positions; forcing a
+    // much shorter SegmentLength can conflict with the segment playlist
+    // timing and leave the native LG decoder stalled for a long interval.
+    // Omit SegmentLength entirely so Jellyfin can use its copy-mode
+    // keyframe-aligned segment behavior. Do not break on P/B frames.
     url.searchParams.set('MinSegments', '2');
     url.searchParams.set('BreakOnNonKeyFrames', 'false');
     return url.pathname + url.search;
