@@ -94,7 +94,8 @@ import {
 
 import {
     getRequestedAudioCodec,
-    preferNativeDtsAuto
+    preferNativeDtsAuto,
+    setDtsHlsTranscodeBitrate
 } from './WebOSDtsPolicy.js';
 
 export {
@@ -1995,6 +1996,18 @@ export class JellyfinPlayer extends EventEmitter {
             if (!mediaSource) {
                 log.error('Media source selection failed');
                 throw new Error('Media source not found');
+            }
+
+            // Jellyfin's StreamBuilder chooses 192 kbps for DTS because its
+            // default-bitrate table does not have a DTS entry. FFmpeg dca rejects
+            // that bitrate for 5.1. Rewrite only DTS HLS transcoding URLs to
+            // request the standard 1536 kbps DTS core bitrate; never alter
+            // DirectPlay/AC3/EAC3/AAC audio paths.
+            if (platformInfo.isWebOS &&
+                (PlayerSettings.get('transcodeAudioCodec') === 'force_dts' ||
+                 PlayerSettings.get('transcodeAudioCodec') === 'prefer_dts') &&
+                setDtsHlsTranscodeBitrate(mediaSource)) {
+                log.info('[C4 DTS] Corrected HLS transcode AudioBitrate to 1536000 bps for FFmpeg dca.');
             }
 
             if (mediaSource.TranscodingInfo) {
