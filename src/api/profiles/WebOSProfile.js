@@ -335,7 +335,14 @@ export function clearCapabilitiesCache() {
     _cachedCapabilities = null;
 }
 
-function _buildMinimalProfile(caps) {
+function _buildMinimalProfile(caps, isHtml5 = false) {
+    // Keep the upstream AAC fallback for normal Force Transcode, but respect
+    // the experimental DTS option selected on the C4's native webOS backend.
+    const preferred = PlayerSettings.get('transcodeAudioCodec');
+    const dtsRequested = !isHtml5 && (preferred === 'prefer_dts' || preferred === 'force_dts');
+    const audioTargets = dtsRequested
+        ? (preferred === 'force_dts' ? ['dts'] : ['dts', 'ac3', 'aac'])
+        : ['aac'];
     return {
         Name: 'Litefin WebOS (Forced Transcode)',
         MaxStreamingBitrate: PlayerSettings.get('maxBitrateInternet') || 40000000,
@@ -343,20 +350,18 @@ function _buildMinimalProfile(caps) {
         MusicStreamingTranscodingBitrate: 384000,
         DirectPlayProfiles: [],
         TranscodingProfiles: [
-            {
-                Container: 'ts',
+            ...audioTargets.map((audioCodec) => ({
+                Container: dtsRequested ? 'mp4' : 'ts',
                 Type: 'Video',
-                AudioCodec: 'aac',
+                AudioCodec: audioCodec,
                 VideoCodec: 'h264',
                 Context: 'Streaming',
                 Protocol: 'hls',
-                // Integer fields — Jellyfin TranscodingProfileDto schema is strict
-                // (MaxAudioChannels, MinSegments, SegmentLength must be numbers, not strings)
-                MaxAudioChannels: caps.maxAudioChannels,
+                MaxAudioChannels: audioCodec === 'dts' ? Math.min(6, caps.maxAudioChannels) : caps.maxAudioChannels,
                 MinSegments: 1,
                 SegmentLength: PlayerSettings.get('webosSegmentLength') || 3,
                 BreakOnNonKeyFrames: true
-            },
+            })),
             {
                 Container: 'mp3',
                 Type: 'Audio',
@@ -478,7 +483,7 @@ export function buildJellyfinProfile(options = {}) {
     });
 
     if (PlayerSettings.get('forceTranscode') || playbackMode === 'transcode') {
-        return _buildMinimalProfile(caps);
+        return _buildMinimalProfile(caps, isHtml5);
     }
 
     let maxBitrate =
