@@ -94,8 +94,7 @@ import {
 
 import {
     getRequestedAudioCodec,
-    preferNativeDtsAuto,
-    avoidUnsupportedDtsEncode
+    preferNativeDtsAuto
 } from './WebOSDtsPolicy.js';
 
 export {
@@ -4948,18 +4947,6 @@ export class JellyfinPlayer extends EventEmitter {
             default:
                 // Keep defaults, Server and DeviceProfile make the decision
                 break;
-        }
-
-        // DTS copy into fMP4 works on a DTS source, but DTS encoding of an
-        // unrelated source generally fails without server-side -strict -2.
-        // Keep DTS passthrough, but fall back to AC3/AAC on non-DTS inputs.
-        if (platformInfo.isWebOS && this._backendType === 'webos' &&
-            avoidUnsupportedDtsEncode(
-                requestBody.DeviceProfile,
-                requestedAudioCodec,
-                PlayerSettings.get('transcodeAudioCodec')
-            )) {
-            log.info('[C4 DTS] Non-DTS input: bypassing experimental DTS encoder for AC3/AAC HLS.');
         }
 
         // -------------------------------------------------------------------------
