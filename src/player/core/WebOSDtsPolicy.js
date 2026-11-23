@@ -6,9 +6,8 @@
  * unrelated compatibility reasons. On Auto, prefer the already-tested native
  * path and leave explicit Remux/Transcode choices alone.
  *
- * A DTS audio stream can be copied into fMP4 HLS. Converting a DIFFERENT codec
- * to DTS is not safe without server-side experimental FFmpeg configuration;
- * pick AC3 instead of sending an unplayable DTS encoder request.
+ * Audio transcoding codec selection is handled by the Jellyfin device profile;
+ * this helper only handles native Direct Play selection.
  */
 export function isDtsAudioCodec(codec) {
     const c = String(codec || '').trim().toLowerCase();
@@ -37,33 +36,4 @@ export function preferNativeDtsAuto({ backendType, dtsSupported, selectedCodec, 
         playbackMode === 'auto' &&
         !forceTranscode &&
         !hasManualBitrate;
-}
-
-/**
- * In a transcoding profile, prefer copying DTS from a DTS source. For other
- * sources, replace unusable DTS HLS encoding profiles with AC3 output.
- * This preserves codec compatibility without misrepresenting DTS encoding.
- */
-export function avoidUnsupportedDtsEncode(deviceProfile, selectedCodec, preferredTranscodeCodec) {
-    if (isDtsAudioCodec(selectedCodec)) return false;
-    if (preferredTranscodeCodec !== 'force_dts' && preferredTranscodeCodec !== 'prefer_dts') return false;
-    if (!Array.isArray(deviceProfile?.TranscodingProfiles)) return false;
-
-    let modified = false;
-    const fallback = [];
-    for (const profile of deviceProfile.TranscodingProfiles) {
-        if (profile.Type === 'Video' && profile.Protocol === 'hls' &&
-            String(profile.AudioCodec || '').split(',').includes('dts')) {
-            modified = true;
-            if (preferredTranscodeCodec === 'force_dts') {
-                fallback.push({ ...profile, AudioCodec: 'ac3' });
-            }
-            // Prefer DTS already has separate AC3/AAC profiles behind DTS;
-            // dropping DTS lets Jellyfin select the working fallback.
-        } else {
-            fallback.push(profile);
-        }
-    }
-    if (modified) deviceProfile.TranscodingProfiles = fallback;
-    return modified;
 }
