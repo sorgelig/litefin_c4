@@ -427,7 +427,13 @@ export class PlayerTab {
                                 label: i18n.t('TranscodeCodecPreferAc3') || 'Prefer AC3 (with AAC fallback)'
                             },
                             { value: 'prefer_aac', label: i18n.t('TranscodeCodecPreferAac') || 'Prefer AAC' },
+                            ...(platformInfo.isWebOS
+                                ? [{ value: 'prefer_dts', label: i18n.t('TranscodeCodecPreferDts') || 'Experimental DTS (with AC3/AAC fallback)' }]
+                                : []),
                             { value: 'force_eac3', label: i18n.t('TranscodeCodecForceEac3') || 'Only E-AC3' },
+                            ...(platformInfo.isWebOS
+                                ? [{ value: 'force_dts', label: i18n.t('TranscodeCodecForceDts') || 'Experimental DTS only (fMP4 HLS)' }]
+                                : []),
                             { value: 'force_ac3', label: i18n.t('TranscodeCodecForceAc3') || 'Only AC3' },
                             { value: 'force_aac', label: i18n.t('TranscodeCodecForceAac') || 'Only AAC' },
                             { value: 'force_mp3', label: i18n.t('TranscodeCodecForceMp3') || 'Only MP3' }
