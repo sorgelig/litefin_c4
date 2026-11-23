@@ -38,6 +38,7 @@ export function shouldUseProgressiveAudioCopy({
     audioStreamIndex,
     needsAudioRemux,
     trackPlayable,
+    deviceModel,
     hasManualBitrate = false,
     wasEscalated = false,
     isLiveTv = false
@@ -51,7 +52,12 @@ export function shouldUseProgressiveAudioCopy({
     if (['remux', 'transcode', 'transcodeAudio', 'transcodeVideo'].includes(userPlaybackMode)) return false;
     if (wasEscalated || isLiveTv || hasManualBitrate) return false;
     if (['transcode', 'transcodeAudio', 'transcodeVideo'].includes(requestedPlaybackMode)) return false;
-    if (!needsAudioRemux || !trackPlayable) return false;
+    // The LG C4 hardware can pass AC3 even when WebKit's canPlayType probe
+    // reports no AC3 support. Also, webOS may advertise native audio-track
+    // switching while video.audioTracks stays empty for MKV. For the C4,
+    // neither a positive probe nor an earlier failed switch is a prerequisite.
+    const isC4 = /^OLED\d{2}C4/i.test(String(deviceModel || ''));
+    if (!needsAudioRemux && !isC4) return false;
 
     const container = String(mediaSource?.Container || '').toLowerCase();
     if (container !== 'mkv' && container !== 'matroska') return false;
@@ -61,8 +67,12 @@ export function shouldUseProgressiveAudioCopy({
     const audios = streams.filter(s => s.Type === 'Audio');
     const selected = audios.find(s => Number(s.Index) === Number(audioStreamIndex));
     const physicalDefault = audios.find(s => s.IsDefault) || audios[0];
-    if (!selected || !physicalDefault || selected.Index === physicalDefault.Index) return false;
-    return COPY_AUDIO_CODECS.has(String(selected.Codec || '').toLowerCase());
+    if (!selected || !physicalDefault || Number(selected.Index) === Number(physicalDefault.Index)) return false;
+    const codec = String(selected.Codec || '').toLowerCase();
+    if (!COPY_AUDIO_CODECS.has(codec)) return false;
+    // Never ignore an explicit DTS/EAC3 disable or a genuine unsupported codec.
+    // The C4's AC3 canPlayType=false result alone is not a passthrough veto.
+    return Boolean(trackPlayable || (isC4 && codec === 'ac3'));
 }
 
 /**
@@ -128,6 +138,9 @@ export function applyProgressiveAudioCopy(mediaSource, audioStreamIndex, startPo
 
     mediaSource.TranscodingUrl = url;
     mediaSource.TranscodingContainer = 'mkv';
+    // PlaybackInfo's old HLS metadata must not classify the new progressive
+    // stream.mkv URL as a manifest during seek, recovery or decoder setup.
+    mediaSource.TranscodingSubProtocol = null;
     // The progressive stream contains only the selected track; do not ask the
     // native webOS audioTracks API to select another track from that stream.
     mediaSource._webosProgressiveAudioCopy = true;
