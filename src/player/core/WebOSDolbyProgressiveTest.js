@@ -91,3 +91,14 @@ export function applyDolbyProgressiveCopy(mediaSource, params) {
     };
     return true;
 }
+
+/**
+ * Progressive FFmpeg MKV does not expose a seekable cue/index to LG webOS.
+ * A user seek must launch a new copy stream with StartTimeTicks instead of
+ * assigning video.currentTime (which rolls back and can stall the decoder).
+ */
+export function shouldRestartDolbyProgressiveSeek(backendType, mediaSource, playOptions) {
+    return backendType === 'webos' &&
+        mediaSource?._webosDolbyProgressiveCopy === true &&
+        Boolean(playOptions);
+}
