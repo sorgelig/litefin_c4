@@ -22,6 +22,7 @@ export function shouldUseProgressiveAudioCopy({
     audioStreamIndex,
     needsAudioRemux,
     trackPlayable,
+    hasManualBitrate = false,
     wasEscalated = false,
     isLiveTv = false
 }) {
@@ -29,7 +30,10 @@ export function shouldUseProgressiveAudioCopy({
         userPlaybackMode === 'directPlay' ||
         forceDirectPlay === 'all' || forceDirectPlay === 'audio' || forceDirectPlay === true;
     if (backendType !== 'webos' || !directPlayRequested) return false;
-    if (wasEscalated || isLiveTv || requestedPlaybackMode === 'transcode') return false;
+    // An OSD mode or manual quality selection must win over global forcing.
+    if (['remux', 'transcode', 'transcodeAudio', 'transcodeVideo'].includes(userPlaybackMode)) return false;
+    if (wasEscalated || isLiveTv || hasManualBitrate) return false;
+    if (['transcode', 'transcodeAudio', 'transcodeVideo'].includes(requestedPlaybackMode)) return false;
     if (!needsAudioRemux || !trackPlayable) return false;
 
     const container = String(mediaSource?.Container || '').toLowerCase();
