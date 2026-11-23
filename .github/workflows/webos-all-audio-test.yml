@@ -9,6 +9,7 @@ on:
       - experiment/webos-enable-then-disable
       - experiment/webos-dd-progressive-copy
       - experiment/webos-dd-progressive-seek-v2
+      - experiment/webos-dd-ts-hls-v2.10.3
   workflow_dispatch:
 
 permissions:
@@ -34,7 +35,9 @@ jobs:
           node --check src/player/core/WebOSPlayer.js
           node --check src/player/core/JellyfinPlayer.js
           node --check src/player/core/WebOSDolbyProgressiveTest.js
+          node --check src/player/core/WebOSDolbyTsHlsTest.js
           node --test tests/WebOSDolbyProgressiveTest.test.js
+          node --test tests/WebOSDolbyTsHlsTest.test.js
           node --test tests/WebOSAllAudioDiagnostic.test.js
       - name: Build installable webOS Modern IPK
         run: |
