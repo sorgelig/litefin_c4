@@ -162,7 +162,9 @@ test('Auto audio-track restart retains copy eligibility after Direct Play falls 
 });
 
 test('webOS failed native audio switch does not force an explicit fMP4 HLS remux', () => {
-    assert.equal(getFailedAudioSwitchRestartMode('webos', 'directPlay', 'directPlay'), 'auto');
+    assert.equal(getFailedAudioSwitchRestartMode('webos', 'directPlay', 'directPlay'), 'directPlay');
+    assert.equal(getFailedAudioSwitchRestartMode('webos', 'directPlay', 'auto'), 'directPlay');
+    assert.equal(getFailedAudioSwitchRestartMode('webos', 'directPlay', 'transcode'), 'transcode');
     assert.equal(getFailedAudioSwitchRestartMode('webos', 'auto', 'auto'), 'auto');
     assert.equal(getFailedAudioSwitchRestartMode('webos', 'auto', 'remux'), 'auto');
     assert.equal(getFailedAudioSwitchRestartMode('webos', 'remux', 'remux'), 'remux');
@@ -174,9 +176,9 @@ test('webOS failed native audio switch does not force an explicit fMP4 HLS remux
     assert.equal(getFailedAudioSwitchRestartMode('tizen', 'auto', 'auto'), 'remux');
 });
 
-test('WebOS failed switch Auto + forceDirectStream reaches progressive AC3 copying', () => {
+test('WebOS failed switch keeps explicit Direct Play and reaches progressive AC3 copying', () => {
     const selectedPlaybackMode = getFailedAudioSwitchRestartMode('webos', 'directPlay', 'directPlay');
-    assert.equal(selectedPlaybackMode, 'auto');
+    assert.equal(selectedPlaybackMode, 'directPlay');
     assert.equal(should({
         userPlaybackMode: 'directPlay',
         requestedPlaybackMode: selectedPlaybackMode,
