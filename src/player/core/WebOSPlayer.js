@@ -29,6 +29,7 @@ import { PlayerSettings } from '../../utils/PlayerSettings.js';
 import { platformInfo } from '../../utils/PlatformInfo.js';
 import { getDeviceCapabilities } from '../../api/DeviceProfile.js';
 import { mapDefaultFirstAudioIndex } from './AudioTrackMap.js';
+import { canVirtualizeMkv, virtualAudioOrdinal, prepareVirtualMkv } from './WebOSVirtualMkv.js';
 
 const log = logger.create('WebOSPlayer');
 
@@ -825,6 +826,9 @@ export class WebOSPlayer {
         this._cancelResume();
 
         this._currentPlayOptions = options;
+        if (this._virtualMkvSession) this._virtualMkvSession.cancel();
+        this._virtualMkvSession = null;
+        this._virtualMkvActive = false;
         this._started    = false;
         this._timeUpdated = false;
         this._subtitleOffset = 0;
@@ -835,6 +839,29 @@ export class WebOSPlayer {
         // Do not attempt robust resume for live TV/streams.
         const isLive = options.item?.Type === 'TvChannel' || options.mediaSource?.LiveStreamId;
         this._robustSeekTarget = isLive ? null : (options.playerStartPositionTicks || 0) / 10000000;
+
+        // Only original DirectPlay MKVs qualify. Ask the packaged Node service
+        // for a byte-range URL where exactly one audio TrackEntry is exposed.
+        // The Luna subscription keeps the service alive throughout playback.
+        if (options.playMethod === 'DirectPlay' && !options.isHls &&
+            canVirtualizeMkv(options.mediaSource, options.audioStreamIndex, 'webos', 'auto')) {
+            const ordinal = virtualAudioOrdinal(options.mediaSource, options.audioStreamIndex);
+            const session = this._sessionId;
+            const virtual = await prepareVirtualMkv(options.url, ordinal, options.headers || {});
+            if (!this._isSessionActive(session)) {
+                virtual?.cancel();
+                throw new PlaybackAbortedError();
+            }
+            if (virtual) {
+                this._virtualMkvSession = virtual;
+                this._virtualMkvActive = true;
+                options = { ...options, url: virtual.url, virtualMkv: true };
+                this._currentPlayOptions = options;
+                log.info('[VirtualMKV] Playing selected audio through local Range proxy, ordinal:', ordinal);
+            } else {
+                log.warn('[VirtualMKV] Service not available; using normal DirectPlay');
+            }
+        }
 
         const video = this._ensureVideoElement();
 
@@ -1952,6 +1979,9 @@ export class WebOSPlayer {
      * @private
      */
     _applyInitialTracks(options, hls) {
+        // Virtual MKV exposes exactly one audio TrackEntry. Selecting by the
+        // unfiltered Jellyfin index would reintroduce the webOS track bug.
+        if (options.virtualMkv) return;
         log.debug('WebOSPlayer._applyInitialTracks: audio stream', options.audioStreamIndex, '/ list index',
             options.audioTrackListIndex, hls
                 ? `— Hls.js tracks: ${describeAudioTracks(hls.audioTracks)}`
@@ -2613,6 +2643,9 @@ export class WebOSPlayer {
      * @returns {Promise<void>}
      */
     async stop() {
+        if (this._virtualMkvSession) this._virtualMkvSession.cancel();
+        this._virtualMkvSession = null;
+        this._virtualMkvActive = false;
         // Drop the session's listeners/timers; a pending play() rejects with PlaybackAbortedError
         this._endSession();
         this._cancelResume();
@@ -2846,6 +2879,10 @@ export class WebOSPlayer {
      *
      * @param {number} listIndex - 0-based index into the audio track list
      */
+    isVirtualMkvActive() {
+        return Boolean(this._virtualMkvActive);
+    }
+
     setAudioStreamIndex(listIndex) {
         log.debug('WebOSPlayer.setAudioStreamIndex: list index', listIndex);
 
