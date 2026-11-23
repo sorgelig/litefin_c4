@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 import {
     isDolbyTrack,
     shouldUseDolbyProgressiveCopy,
@@ -81,4 +82,14 @@ test('static DirectPlay without HLS URL can still build progressive source', () 
     assert.equal(src.TranscodingInfo.VideoCodec, 'copy');
     assert.equal(src.TranscodingInfo.AudioCodec, 'copy');
     assert.match(src.TranscodingUrl, /AudioStreamIndex=3/);
+});
+
+test('player uses defined Live TV variable when invoking DD progressive routing', () => {
+    // This guards a runtime ReferenceError that node --check cannot detect.
+    const source = readFileSync(
+        new URL('../src/player/core/JellyfinPlayer.js', import.meta.url), 'utf8'
+    );
+    assert.match(source, /const isLiveChannel = options\.item\?\.Type === 'TvChannel'/);
+    assert.match(source, /isLiveTv:\s*isLiveChannel/);
+    assert.doesNotMatch(source, /\n\s+isLiveTv,\s*\n/);
 });
