@@ -2966,10 +2966,19 @@ export class WebOSPlayer {
             return;
         }
 
+        // EXPERIMENT: switch audio with one write, avoiding the transient
+        // all-disabled state caused by disabling the old track before enabling
+        // the new one. LG's Chromium/selectTrack handles deactivating the old
+        // track when the selected native track is enabled.
+        const oldEnabled = [];
         for (let i = 0; i < audioTracks.length; i++) {
-            audioTracks[i].enabled = (i === nativeIndex);
+            if (audioTracks[i].enabled) oldEnabled.push(i);
         }
-        log.info('WebOSPlayer: Native audio track → list index', listIndex, '→ native index', nativeIndex);
+        audioTracks[nativeIndex].enabled = true;
+        log.warn('[AudioSingleEnableTest] Switched native audio track without disabling others:', {
+            listIndex, nativeIndex, previouslyEnabled: oldEnabled,
+            nowEnabled: Array.from({ length: audioTracks.length }, (_, i) => audioTracks[i].enabled ? i : -1).filter(i => i >= 0)
+        });
 
         // EXPERIMENT: do not force a 0.1-second backward seek after enabling
         // the selected native audioTracks entry. Some webOS/ARC pipelines seem
