@@ -2016,6 +2016,32 @@ export class JellyfinPlayer extends EventEmitter {
                 (track) => track.Type === 'Audio' &&
                     Number(track.Index) === Number(options.audioStreamIndex)
             );
+            // Evaluate original codec/hardware compatibility, not the CURRENT
+            // HLS session. isAudioTrackNativelyPlayable() deliberately returns
+            // false for a track whose TranscodingUrl is already re-encoding it.
+            // Feeding that session back into our copy-path check makes the
+            // decision circular and blocks AC3 bitstream copy every time.
+            const originalCapabilitySource = {
+                ...(activeMs || mediaSource),
+                TranscodingUrl: null,
+                TranscodingInfo: null
+            };
+            const originalTrackPlayable = selectedAudioTrack
+                ? isAudioTrackNativelyPlayable(
+                    selectedAudioTrack, originalCapabilitySource, this._backendType
+                )
+                : false;
+            if (this._backendType === 'webos' && selectedAudioTrack) {
+                log.info('[WebOS Audio] Copy eligibility:', {
+                    codec: selectedAudioTrack.Codec,
+                    index: selectedAudioTrack.Index,
+                    playable: originalTrackPlayable,
+                    needsAudioRemux: Boolean(needsDirectStreamForAudio),
+                    userMode: this._userPlaybackMode,
+                    requestMode: options.playbackMode,
+                    escalated: Boolean(this._directPlayEscalated)
+                });
+            }
             if (shouldUseProgressiveAudioCopy({
                 backendType: this._backendType,
                 userPlaybackMode: this._userPlaybackMode,
@@ -2024,9 +2050,7 @@ export class JellyfinPlayer extends EventEmitter {
                 mediaSource,
                 audioStreamIndex: options.audioStreamIndex,
                 needsAudioRemux: needsDirectStreamForAudio,
-                trackPlayable: selectedAudioTrack
-                    ? isAudioTrackNativelyPlayable(selectedAudioTrack, mediaSource, this._backendType)
-                    : false,
+                trackPlayable: originalTrackPlayable,
                 hasManualBitrate: this._manualBitrate > 0 && this._manualBitrate < 120000000,
                 wasEscalated: this._directPlayEscalated,
                 isLiveTv: options.item?.Type === 'TvChannel'
