@@ -18,6 +18,22 @@ let _cachedCapabilities = null;
 let _codecCache = null;
 
 /**
+ * EXPERIMENTAL BUILD ONLY:
+ * Advertise common audio codecs as natively pass-through capable on webOS.
+ * This is an assertion sent to Jellyfin, NOT a hardware capability check.
+ * The native audio-track switching and seeking implementations are unchanged.
+ */
+const DIAGNOSTIC_ALL_AUDIO_PASSTHROUGH = true;
+const DIAGNOSTIC_DIRECT_AUDIO_CODECS = [
+    'aac', 'aac_latm', 'mp3', 'mp2', 'mp1', 'ac3', 'eac3',
+    'dts', 'dca', 'dtshd', 'dts-hd', 'dts-ma', 'dts-x',
+    'truehd', 'mlp', 'flac', 'alac', 'opus', 'vorbis',
+    'pcm', 'wav', 'pcm_s16le', 'pcm_s24le', 'pcm_s32le',
+    'pcm_f32le', 'pcm_f64le', 'wma', 'wmav2', 'wmapro',
+    'wmalossless', 'ape', 'tta', 'tak', 'alaw', 'mulaw'
+].join(',');
+
+/**
  * Probes the actual decoder pipeline using both MSE and native
  * HTML5 <video> canPlayType. This covers both native and HLS playback paths.
  * @param {string} mime - Mime type string with codec parameters
@@ -312,13 +328,14 @@ export function getDeviceCapabilities() {
         av1,
         vp9,
         vp8: true,
-        ac3,
-        eac3,
-        dts,
-        truehd: false,
+        ac3: DIAGNOSTIC_ALL_AUDIO_PASSTHROUGH || ac3,
+        eac3: DIAGNOSTIC_ALL_AUDIO_PASSTHROUGH || eac3,
+        dts: DIAGNOSTIC_ALL_AUDIO_PASSTHROUGH || dts,
+        truehd: DIAGNOSTIC_ALL_AUDIO_PASSTHROUGH,
         mpeg2video: codecs.mpeg2video,
         mpegts: codecs.mpegts,
-        mp2: codecs.mp2,
+        mp2: DIAGNOSTIC_ALL_AUDIO_PASSTHROUGH || codecs.mp2,
+        diagnosticAllAudioPassthrough: DIAGNOSTIC_ALL_AUDIO_PASSTHROUGH,
         maxAudioChannels: DEFAULT_MAX_CHANNELS
     };
 
@@ -423,6 +440,9 @@ export function buildJellyfinProfile(options = {}) {
      */
     const isHtml5 = typeof options === 'object' && options.backend === 'html5';
     const caps = getDeviceCapabilities();
+    if (DIAGNOSTIC_ALL_AUDIO_PASSTHROUGH) {
+        log.warn('[AudioPassthroughDiagnostic] Advertising all direct-play audio codecs (experimental; not hardware verified).');
+    }
 
     const hevcSetting = PlayerSettings.get('enableHEVC');
     const enableHEVC = hevcSetting === 'enable' ? true : hevcSetting === 'disable' ? false : caps.hevc;
@@ -449,7 +469,7 @@ export function buildJellyfinProfile(options = {}) {
     const allowDoviProfile5 = enableDolbyVision && !isHtml5;
 
     const dtsSetting = PlayerSettings.get('enableDts');
-    const enableDts = dtsSetting === 'enable' ? true : dtsSetting === 'disable' ? false : caps.dts;
+    const enableDts = DIAGNOSTIC_ALL_AUDIO_PASSTHROUGH || (dtsSetting === 'enable' ? true : dtsSetting === 'disable' ? false : caps.dts);
 
     // -------------------------------------------------------------------------
     // Dolby TrueHD: WebOS web applications and MediaPipeline lack native decode
@@ -460,7 +480,7 @@ export function buildJellyfinProfile(options = {}) {
     // TrueHD to E-AC-3/AC-3. Forced on, Jellyfin is told the TV can take it.
     // -------------------------------------------------------------------------
     const trueHdSetting = PlayerSettings.get('enableTrueHd');
-    const enableTrueHd = trueHdSetting === 'enable';
+    const enableTrueHd = DIAGNOSTIC_ALL_AUDIO_PASSTHROUGH || trueHdSetting === 'enable';
 
     log.info('Evaluation flags:', {
         isHtml5,
@@ -494,7 +514,7 @@ export function buildJellyfinProfile(options = {}) {
     // (AudioChannels <= 6) to reject DirectPlay for 7.1 tracks with AudioChannelsNotSupported,
     // forcing unnecessary server transcoding to a 5.1 AC3 compatibility track.
     const defaultMaxChannels = enableDts || enableTrueHd ? 8 : caps.maxAudioChannels;
-    const maxAudioChannels = userMaxChannels && userMaxChannels > 0 ? userMaxChannels : defaultMaxChannels;
+    const maxAudioChannels = DIAGNOSTIC_ALL_AUDIO_PASSTHROUGH ? 16 : (userMaxChannels && userMaxChannels > 0 ? userMaxChannels : defaultMaxChannels);
 
     // ProfileCondition.Value is always a string in Jellyfin's schema, so we keep
     // a separate string-form for use inside CodecProfile condition objects.
@@ -562,7 +582,7 @@ export function buildJellyfinProfile(options = {}) {
     const mp2Setting = PlayerSettings.get('enableMp2') || 'auto';
     // On WebOS, we default to false/disabled for MP2 because the native HLS pipeline stalls on it.
     // However, the user can override this to true/enable.
-    const enableMp2 = mp2Setting === 'enable' ? true : mp2Setting === 'disable' ? false : false;
+    const enableMp2 = DIAGNOSTIC_ALL_AUDIO_PASSTHROUGH || (mp2Setting === 'enable' ? true : mp2Setting === 'disable' ? false : false);
 
     const audioCodecs = [];
     if (caps.eac3) audioCodecs.push('eac3'); // caps.eac3 already reflects force-state override
@@ -579,7 +599,7 @@ export function buildJellyfinProfile(options = {}) {
     if (enableDts) audioCodecs.push('dts', 'dca', 'dtshd', 'dts-hd', 'dts-ma', 'dts-x');
     if (enableTrueHd) audioCodecs.push('truehd');
 
-    const audioCodecString = audioCodecs.join(',');
+    const audioCodecString = DIAGNOSTIC_ALL_AUDIO_PASSTHROUGH ? DIAGNOSTIC_DIRECT_AUDIO_CODECS : audioCodecs.join(',');
 
     const generalVideoCodecs = ['h264', 'vc1'];
     if (enableHEVC) generalVideoCodecs.push('hevc');
@@ -833,7 +853,7 @@ export function buildJellyfinProfile(options = {}) {
     const directAudioCodecsArr = ['aac', 'ac3', 'eac3', 'mp3', 'flac'];
     if (enableDts) directAudioCodecsArr.push('dts', 'dca', 'dtshd', 'dts-hd', 'dts-ma', 'dts-x');
     if (enableTrueHd) directAudioCodecsArr.push('truehd');
-    const directAudioCodecs = directAudioCodecsArr.join(',');
+    const directAudioCodecs = DIAGNOSTIC_ALL_AUDIO_PASSTHROUGH ? DIAGNOSTIC_DIRECT_AUDIO_CODECS : directAudioCodecsArr.join(',');
 
     let transVideoCodecs = hevcInHls ? 'h264,hevc' : 'h264';
 
