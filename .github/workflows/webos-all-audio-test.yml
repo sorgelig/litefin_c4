@@ -1,9 +1,10 @@
-name: Build WebOS All-Audio Passthrough Diagnostic
+name: Build WebOS Audio Diagnostic
 
 on:
   push:
     branches:
       - experiment/webos-all-audio-passthrough
+      - experiment/webos-no-audio-switch-seek
   workflow_dispatch:
 
 permissions:
