@@ -1969,8 +1969,13 @@ export class WebOSPlayer {
             return;
         }
 
-        // ---- Audio track ----
-        if (options.audioStreamIndex !== undefined && options.audioStreamIndex !== null) {
+        // The HLS master generated for this diagnostic contains only the
+        // server-selected AC3/EAC3 track. Do not reinterpret the original
+        // MKV audioTrackListIndex against that single-track rendition.
+        // Unlike a broad early return, this still allows subtitle setup below.
+        if (!hls && options.mediaSource?._webosDolbyTsHlsCopy) {
+            log.warn('[DolbyTsHlsTest] Native TS-HLS already carries selected AC3/EAC3; skipping audioTracks toggle.');
+        } else if (options.audioStreamIndex !== undefined && options.audioStreamIndex !== null) {
             // JellyfinPlayer precomputes the backend-visible list index because
             // WebOS may hide unsupported passthrough tracks from audioTracks.
             const resolvedIndex = options.audioTrackListIndex >= 0 ? options.audioTrackListIndex : 0;
