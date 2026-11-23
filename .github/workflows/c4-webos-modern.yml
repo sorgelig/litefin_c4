@@ -23,7 +23,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
       - name: Test C4 DTS playback profiles
-        run: node --test tests/WebOSC4DtsProfile.test.js
+        run: node --test tests/WebOSC4DtsProfile.test.js tests/WebOSDtsPolicy.test.js
       - name: Prepare package signing directory
         run: mkdir -p .sign
       - name: Build webOS Modern IPK
