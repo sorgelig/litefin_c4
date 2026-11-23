@@ -2019,6 +2019,7 @@ export class JellyfinPlayer extends EventEmitter {
             if (shouldUseProgressiveAudioCopy({
                 backendType: this._backendType,
                 userPlaybackMode: this._userPlaybackMode,
+                forceDirectPlay: PlayerSettings.get('forceDirectPlay'),
                 requestedPlaybackMode: options.playbackMode,
                 mediaSource,
                 audioStreamIndex: options.audioStreamIndex,
@@ -2029,7 +2030,15 @@ export class JellyfinPlayer extends EventEmitter {
                 wasEscalated: this._directPlayEscalated,
                 isLiveTv: options.item?.Type === 'TvChannel'
             }) && applyProgressiveAudioCopy(
-                mediaSource, options.audioStreamIndex, options.startPositionTicks || 0
+                mediaSource,
+                options.audioStreamIndex,
+                options.startPositionTicks || 0,
+                {
+                    itemId: options.itemId,
+                    mediaSourceId: mediaSource.Id,
+                    playSessionId: playbackInfo.PlaySessionId,
+                    authToken: this.authToken
+                }
             )) {
                 log.info('[WebOS Audio] Non-default bitstream track: progressive MKV A/V stream-copy instead of HLS transcoding.');
             }
