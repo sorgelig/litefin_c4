@@ -98,6 +98,11 @@ import {
     setDtsHlsTranscodeBitrate
 } from './WebOSDtsPolicy.js';
 
+import {
+    shouldUseProgressiveAudioCopy,
+    applyProgressiveAudioCopy
+} from './WebOSProgressiveAudio.js';
+
 export {
     isTrueHdSupported,
     isDtsSupported,
@@ -1996,6 +2001,37 @@ export class JellyfinPlayer extends EventEmitter {
             if (!mediaSource) {
                 log.error('Media source selection failed');
                 throw new Error('Media source not found');
+            }
+
+            // Native webOS cannot reliably select non-default MKV audio tracks
+            // when video.audioTracks is empty. In Direct Play mode the normal
+            // HLS/remux path re-encodes AC3 as the selected audio transcode
+            // codec (DTS) and the LG then emits PCM over ARC. Instead, build a
+            // progressive MKV remux using -c:v copy -c:a copy so the chosen
+            // track reaches the TV's native hardware bitstream path unchanged.
+            // Never touch the default track, unsupported codecs, other players
+            // or explicit transcoding. Existing error-to-transcode fallback
+            // remains active if this progressive remux isn't supported.
+            const selectedAudioTrack = mediaSource.MediaStreams?.find(
+                (track) => track.Type === 'Audio' &&
+                    Number(track.Index) === Number(options.audioStreamIndex)
+            );
+            if (shouldUseProgressiveAudioCopy({
+                backendType: this._backendType,
+                userPlaybackMode: this._userPlaybackMode,
+                requestedPlaybackMode: options.playbackMode,
+                mediaSource,
+                audioStreamIndex: options.audioStreamIndex,
+                needsAudioRemux: needsDirectStreamForAudio,
+                trackPlayable: selectedAudioTrack
+                    ? isAudioTrackNativelyPlayable(selectedAudioTrack, mediaSource, this._backendType)
+                    : false,
+                wasEscalated: this._directPlayEscalated,
+                isLiveTv: options.item?.Type === 'TvChannel'
+            }) && applyProgressiveAudioCopy(
+                mediaSource, options.audioStreamIndex, options.startPositionTicks || 0
+            )) {
+                log.info('[WebOS Audio] Non-default bitstream track: progressive MKV A/V stream-copy instead of HLS transcoding.');
             }
 
             // Jellyfin's StreamBuilder chooses 192 kbps for DTS because its
