@@ -16,6 +16,7 @@ const COPY_AUDIO_CODECS = new Set(['ac3', 'eac3', 'dts', 'dca']);
 export function shouldUseProgressiveAudioCopy({
     backendType,
     userPlaybackMode,
+    forceDirectPlay,
     requestedPlaybackMode,
     mediaSource,
     audioStreamIndex,
@@ -24,7 +25,10 @@ export function shouldUseProgressiveAudioCopy({
     wasEscalated = false,
     isLiveTv = false
 }) {
-    if (backendType !== 'webos' || userPlaybackMode !== 'directPlay') return false;
+    const directPlayRequested =
+        userPlaybackMode === 'directPlay' ||
+        forceDirectPlay === 'all' || forceDirectPlay === 'audio' || forceDirectPlay === true;
+    if (backendType !== 'webos' || !directPlayRequested) return false;
     if (wasEscalated || isLiveTv || requestedPlaybackMode === 'transcode') return false;
     if (!needsAudioRemux || !trackPlayable) return false;
 
@@ -46,17 +50,31 @@ export function shouldUseProgressiveAudioCopy({
  * stream selections and session parameters but requests stream copy instead
  * of the user's HLS audio transcode target. Never rewrite other endpoints.
  */
-export function buildProgressiveAudioCopyUrl(transcodingUrl, audioStreamIndex, startPositionTicks = 0) {
-    if (typeof transcodingUrl !== 'string' || !transcodingUrl) return null;
+export function buildProgressiveAudioCopyUrl(transcodingUrl, audioStreamIndex, startPositionTicks = 0, fallback = null) {
     let url;
-    try {
-        url = new URL(transcodingUrl, 'http://jellyfin.invalid');
-    } catch {
+    if (typeof transcodingUrl === 'string' && transcodingUrl) {
+        try {
+            url = new URL(transcodingUrl, 'http://jellyfin.invalid');
+        } catch {
+            return null;
+        }
+        const suffix = '/master.m3u8';
+        if (!url.pathname.includes('/Videos/') || !url.pathname.endsWith(suffix)) return null;
+        url.pathname = url.pathname.slice(0, -suffix.length) + '/stream.mkv';
+    } else if (fallback?.itemId && fallback?.mediaSourceId) {
+        // Strict Direct Play disables transcoding profiles, so PlaybackInfo has
+        // no HLS URL to rewrite. Build the standard progressive Jellyfin endpoint
+        // with the requested media source and the existing authenticated session.
+        url = new URL(
+            '/Videos/' + encodeURIComponent(fallback.itemId) + '/stream.mkv',
+            'http://jellyfin.invalid'
+        );
+        url.searchParams.set('MediaSourceId', fallback.mediaSourceId);
+        if (fallback.playSessionId) url.searchParams.set('PlaySessionId', fallback.playSessionId);
+        if (fallback.authToken) url.searchParams.set('ApiKey', fallback.authToken);
+    } else {
         return null;
     }
-    const suffix = '/master.m3u8';
-    if (!url.pathname.includes('/Videos/') || !url.pathname.endsWith(suffix)) return null;
-    url.pathname = url.pathname.slice(0, -suffix.length) + '/stream.mkv';
 
     for (const key of [
         'SegmentContainer', 'SegmentLength', 'MinSegments',
@@ -83,8 +101,8 @@ export function buildProgressiveAudioCopyUrl(transcodingUrl, audioStreamIndex, s
  * only when it can be constructed safely. A true result must be used before
  * MediaHelper.getPlayMethod() chooses HLS/native playback.
  */
-export function applyProgressiveAudioCopy(mediaSource, audioStreamIndex, startPositionTicks = 0) {
-    const url = buildProgressiveAudioCopyUrl(mediaSource?.TranscodingUrl, audioStreamIndex, startPositionTicks);
+export function applyProgressiveAudioCopy(mediaSource, audioStreamIndex, startPositionTicks = 0, fallback = null) {
+    const url = buildProgressiveAudioCopyUrl(mediaSource?.TranscodingUrl, audioStreamIndex, startPositionTicks, fallback);
     if (!url) return false;
 
     mediaSource.TranscodingUrl = url;
