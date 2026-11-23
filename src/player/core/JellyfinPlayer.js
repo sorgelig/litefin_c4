@@ -90,7 +90,7 @@ import {
     rememberContainerWithoutAudioTracks,
     hasContainerWithoutAudioTracks,
     doesAudioTrackRequireDirectStream
- } from './StreamUtils.js';
+} from './StreamUtils.js';
 
 import {
     getRequestedAudioCodec,
@@ -1909,7 +1909,7 @@ export class JellyfinPlayer extends EventEmitter {
                 selectedCodec: getRequestedAudioCodec(options),
                 playbackMode: this._playbackMode,
                 forceTranscode: PlayerSettings.get('forceTranscode'),
-                hasManualBitrate: this._manualBitrate > 0
+                hasManualBitrate: this._manualBitrate > 0 && this._manualBitrate < 120000000
             });
             const needsDirectStreamForAudio = options._forceDirectStream ||
                 (trackRequiresDirectStream && !nativeDtsAuto) ||
@@ -4577,7 +4577,8 @@ export class JellyfinPlayer extends EventEmitter {
             backendType: this._backendType,
             dtsSupported: isDtsSupported(),
             selectedCodec: requestedAudioCodec,
-            playbackMode: options.playbackMode || this._playbackMode || 'auto',
+            playbackMode: options.playbackMode && options.playbackMode !== 'auto'
+                ? options.playbackMode : this._playbackMode || 'auto',
             forceTranscode: PlayerSettings.get('forceTranscode'),
             hasManualBitrate: typeof manualBitrate === 'number' && manualBitrate > 0 && manualBitrate < 120000000
         });
