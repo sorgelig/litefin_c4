@@ -3088,7 +3088,53 @@ export class JellyfinPlayer extends EventEmitter {
             this._subtitleManager.resetActiveCues();
         }
 
-        // Delegate the core seek execution to our underlying player backend (AVPlay, HTML5, WebOS)
+        // Jellyfin's progressive /stream.mkv endpoint starts FFmpeg at
+        // StartTimeTicks, but the resulting stream has no reliable random-access
+        // index in the C4 native demuxer. video.currentTime seeks can silently
+        // snap back to the former position. Open a new stream at the absolute
+        // target instead; the existing transcodingOffsetTicks maps its 0-based
+        // timestamps back onto the media timeline.
+        if (this._backendType === 'webos' &&
+            this._currentMediaSource?._webosProgressiveAudioCopy &&
+            this._currentPlayOptions) {
+            const restartOptions = {
+                ...this._currentPlayOptions,
+                audioStreamIndex: this._currentAudioStreamIndex,
+                subtitleStreamIndex: this._currentSubtitleStreamIndex,
+                secondarySubtitleStreamIndex: this._currentSecondarySubtitleStreamIndex,
+                startPositionTicks: positionTicks,
+                playbackMode: this._userPlaybackMode === 'directPlay'
+                    ? 'directPlay' : this._playbackMode,
+                _forceDirectStream: true,
+                autoPlay: this._isPaused ? false : this._currentPlayOptions.autoPlay
+            };
+            log.info('[WebOS Audio] Progressive MKV seek: restarting A/V copy at', positionTicks,
+                'ticks, track', restartOptions.audioStreamIndex);
+            this._currentPlayOptions = restartOptions;
+            this._lastPlayOptions = restartOptions;
+            this._isRestarting = true;
+            this._restartOwner = restartOptions;
+            this.emit(PlayerEvent.RESTARTING);
+            // No fixed pause for the native webOS backend. The restart owner
+            // and play request token prevent an obsolete seek from loading
+            // after a newer one or after the user leaves playback.
+            (async () => {
+                try {
+                    await this.stop({ restart: true });
+                    await this._playAfterRestartPause(restartOptions, 0);
+                } catch (error) {
+                    log.error('[WebOS Audio] Progressive MKV seek restart failed:', error);
+                } finally {
+                    if (this._restartOwner === restartOptions) {
+                        this._isRestarting = false;
+                    }
+                }
+            })();
+            this.emit('seek', { positionTicks });
+            return;
+        }
+
+        // Other playback transports retain their native seeks.
         this._backend?.seek(positionTicks, options);
 
         // Notify all registered UI/OSD event listeners that seek has successfully fired
@@ -4458,6 +4504,11 @@ export class JellyfinPlayer extends EventEmitter {
      * @returns {number}
      */
     getCurrentPositionMs() {
+        // Repeated relative seeks should advance from the pending target rather
+        // than from the previous stream position while a seek/restart is pending.
+        if (this._isSeeking && this._seekTargetTicks != null) {
+            return this._seekTargetTicks / 10000;
+        }
         // A progressive transcode started at an offset reports time from 0;
         // seek() takes media positions, like getCurrentPositionTicks() returns
         const backendMs = (this._backend?.getCurrentTime() ?? 0) * 1000;
