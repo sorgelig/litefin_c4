@@ -927,8 +927,8 @@ export function buildJellyfinProfile(options = {}) {
             VideoCodec: transVideoCodecs,
             Context: 'Streaming',
             Protocol: 'hls',
-            // Integer fields — Jellyfin TranscodingProfileDto schema is strict
-            MaxAudioChannels: transMaxAudioChannels,
+            // DTS core encodes at most 5.1 channels; keep the passthrough limit independent.
+            MaxAudioChannels: audioCodec === 'dts' ? Math.min(6, transMaxAudioChannels) : transMaxAudioChannels,
             // ---------------------------------------------------------------------
             // Segment sizing: left undefined during video copy to align with GOPs.
             // When re-encoding, defaults to 2s for HTML5 / 6s for native WebOS.
