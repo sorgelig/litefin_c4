@@ -26,11 +26,12 @@ export function shouldUseProgressiveAudioCopy({
     wasEscalated = false,
     isLiveTv = false
 }) {
-    const directPlayRequested =
-        userPlaybackMode === 'directPlay' ||
-        forceDirectPlay === 'all' || forceDirectPlay === 'audio' || forceDirectPlay === true;
-    if (backendType !== 'webos' || !directPlayRequested) return false;
-    // An OSD mode or manual quality selection must win over global forcing.
+    // Auto also prefers original audio for a supported non-default track.
+    // The in-player Direct Play mode may be reset to Auto during an internal
+    // audio-track restart; requiring an exact 'directPlay' string here would
+    // wrongly re-encode that track as the selected HLS codec.
+    if (backendType !== 'webos') return false;
+    // Respect deliberate remux/transcode choices and quality limits.
     if (['remux', 'transcode', 'transcodeAudio', 'transcodeVideo'].includes(userPlaybackMode)) return false;
     if (wasEscalated || isLiveTv || hasManualBitrate) return false;
     if (['transcode', 'transcodeAudio', 'transcodeVideo'].includes(requestedPlaybackMode)) return false;
