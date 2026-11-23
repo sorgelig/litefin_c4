@@ -2966,10 +2966,17 @@ export class WebOSPlayer {
             return;
         }
 
-        // EXPERIMENT: activate requested audio first, then disable the others.
-        // The single-enable experiment did not actually switch tracks on LG C4.
-        // This ensures a single selected track without a transient all-disabled
-        // state, unlike upstream's index-ordered disable-before-enable loop.
+        // EXPERIMENT: pause the native player before changing enabled tracks.
+        // Tests whether mid-decode switching alone makes LG webOS renegotiate
+        // Dolby Digital output as PCM stereo. Playback is resumed afterwards.
+        const resumeAfterAudioSwitch = !video.paused;
+        if (resumeAfterAudioSwitch) {
+            log.warn('[AudioPauseSwitchTest] Pausing before native audio switch');
+            video.pause();
+        }
+
+        // Keep the enable-target-before-disable-previous ordering that was
+        // confirmed to switch tracks, with no forced decoder-reset seek.
         const previouslyEnabled = [];
         for (let i = 0; i < audioTracks.length; i++) {
             if (audioTracks[i].enabled) previouslyEnabled.push(i);
@@ -2980,10 +2987,24 @@ export class WebOSPlayer {
                 audioTracks[i].enabled = false;
             }
         }
-        log.warn('[AudioEnableThenDisableTest] Native track switch completed:', {
+        log.warn('[AudioPauseSwitchTest] Native audio selection completed:', {
             listIndex, nativeIndex, previouslyEnabled,
-            nowEnabled: Array.from({ length: audioTracks.length }, (_, i) => audioTracks[i].enabled ? i : -1).filter(i => i >= 0)
+            nowEnabled: Array.from({ length: audioTracks.length }, (_, i) => audioTracks[i].enabled ? i : -1).filter(i => i >= 0),
+            paused: video.paused
         });
+
+        if (resumeAfterAudioSwitch) {
+            const sameVideo = video;
+            // Resume on a separate frame, allowing the TV a short idle turn
+            // to apply the new compressed-audio track before decoder restart.
+            requestAnimationFrame(() => {
+                if (this._videoElement !== sameVideo || !sameVideo.paused) return;
+                sameVideo.play().then(
+                    () => log.warn('[AudioPauseSwitchTest] Native playback resumed'),
+                    (err) => log.warn('[AudioPauseSwitchTest] Resume was rejected', err)
+                );
+            });
+        }
 
         // EXPERIMENT: do not force a 0.1-second backward seek after enabling
         // the selected native audioTracks entry. Some webOS/ARC pipelines seem
