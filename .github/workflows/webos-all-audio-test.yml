@@ -7,6 +7,7 @@ on:
       - experiment/webos-no-audio-switch-seek
       - experiment/webos-single-enable-audio
       - experiment/webos-enable-then-disable
+      - experiment/webos-dd-progressive-copy
   workflow_dispatch:
 
 permissions:
@@ -30,6 +31,9 @@ jobs:
           node --check src/api/profiles/WebOSProfile.js
           node --check src/player/core/StreamUtils.js
           node --check src/player/core/WebOSPlayer.js
+          node --check src/player/core/JellyfinPlayer.js
+          node --check src/player/core/WebOSDolbyProgressiveTest.js
+          node --test tests/WebOSDolbyProgressiveTest.test.js
           node --test tests/WebOSAllAudioDiagnostic.test.js
       - name: Build installable webOS Modern IPK
         run: |
