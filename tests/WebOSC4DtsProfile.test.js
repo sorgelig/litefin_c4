@@ -70,3 +70,22 @@ test('C4: HTML5 fallback does not advertise DTS in HLS output', () => {
     assert.ok(profiles.every((p) => p.AudioCodec === 'aac'));
     PlayerSettings.set('transcodeAudioCodec', 'auto');
 });
+
+test('C4: Force Transcode honors experimental DTS-only instead of silently choosing AAC', () => {
+    setDtsMode('force_dts');
+    const profiles = hlsProfiles(buildJellyfinProfile({ playbackMode: 'transcode' }));
+    assert.ok(profiles.length > 0);
+    assert.ok(profiles.every((p) => p.AudioCodec === 'dts'));
+    assert.ok(profiles.every((p) => p.Container === 'mp4'));
+    assert.ok(profiles.every((p) => p.MaxAudioChannels <= 6));
+    PlayerSettings.set('transcodeAudioCodec', 'auto');
+});
+
+test('C4: HTML5 Force Transcode remains compatible AAC output', () => {
+    setDtsMode('force_dts');
+    const profiles = hlsProfiles(buildJellyfinProfile({ playbackMode: 'transcode', backend: 'html5' }));
+    assert.ok(profiles.length > 0);
+    assert.ok(profiles.every((p) => p.AudioCodec === 'aac'));
+    assert.ok(profiles.every((p) => p.Container === 'ts'));
+    PlayerSettings.set('transcodeAudioCodec', 'auto');
+});
