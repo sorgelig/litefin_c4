@@ -46,7 +46,11 @@ test('do not alter first/default DTS, unsupported TrueHD, explicit transcode or 
     assert.equal(should({ backendType: 'html5' }), false);
     assert.equal(should({ userPlaybackMode: 'remux' }), false);
     assert.equal(should({ userPlaybackMode: 'auto' }), false);
+    assert.equal(should({ userPlaybackMode: 'auto', forceDirectPlay: 'all' }), true);
+    assert.equal(should({ userPlaybackMode: 'auto', forceDirectPlay: 'audio' }), true);
+    assert.equal(should({ userPlaybackMode: 'remux', forceDirectPlay: 'all' }), false);
     assert.equal(should({ requestedPlaybackMode: 'transcode' }), false);
+    assert.equal(should({ hasManualBitrate: true }), false);
     assert.equal(should({ wasEscalated: true }), false);
     assert.equal(should({ needsAudioRemux: false }), false);
     assert.equal(should({ trackPlayable: false }), false);
@@ -99,4 +103,34 @@ test('no mutation when server does not return a usable HLS URL', () => {
     const before = structuredClone(ms);
     assert.equal(applyProgressiveAudioCopy(ms, 3), false);
     assert.deepEqual(ms, before);
+});
+
+test('global Force Direct Play: construct progressive MKV when strict PlaybackInfo has no TranscodingUrl', () => {
+    const ms = source();
+    delete ms.TranscodingUrl;
+    const auth = {
+        itemId: 'movie-id',
+        mediaSourceId: ms.Id,
+        playSessionId: 'session-xyz',
+        authToken: 'secret-123'
+    };
+    const url = buildProgressiveAudioCopyUrl(undefined, 3, 33000000000, auth);
+    assert.ok(url.startsWith('/Videos/movie-id/stream.mkv?'));
+    const parsed = new URL(url, 'https://server.local');
+    assert.equal(parsed.searchParams.get('MediaSourceId'), 'media-id');
+    assert.equal(parsed.searchParams.get('PlaySessionId'), 'session-xyz');
+    assert.equal(parsed.searchParams.get('ApiKey'), 'secret-123');
+    assert.equal(parsed.searchParams.get('VideoCodec'), 'copy');
+    assert.equal(parsed.searchParams.get('AudioCodec'), 'copy');
+    assert.equal(parsed.searchParams.get('AudioStreamIndex'), '3');
+    assert.equal(parsed.searchParams.get('StartTimeTicks'), '33000000000');
+    assert.equal(applyProgressiveAudioCopy(ms, 3, 33000000000, auth), true);
+    assert.equal(ms._webosProgressiveAudioCopy, true);
+    assert.equal(ms.SupportsDirectStream, true);
+    assert.equal(ms.TranscodingUrl, url);
+});
+
+test('never generate unauthenticated synthetic URLs without media identity', () => {
+    assert.equal(buildProgressiveAudioCopyUrl(null, 3, 0, {}), null);
+    assert.equal(buildProgressiveAudioCopyUrl(null, 3, 0, { itemId: 'movie-id' }), null);
 });
