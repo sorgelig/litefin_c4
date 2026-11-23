@@ -268,8 +268,11 @@ export function getDeviceCapabilities() {
     // DTS, see probeDts().
     // ────────────────────────────────────────────────────────────────────────
     const dtsSetting = PlayerSettings.get('enableDts');
+    // C4-targeted fork: LG's canPlayType probe can report '' even though the C4
+    // passes DTS to an ARC receiver. Respect an explicit Disable in all cases.
+    const isC4 = /^OLED\d{2}C4/i.test(modelName);
     const dts =
-        dtsSetting === 'enable' ? true : dtsSetting === 'disable' ? false : codecs.dts === true || webosVersion < 5;
+        dtsSetting === 'enable' ? true : dtsSetting === 'disable' ? false : codecs.dts === true || webosVersion < 5 || isC4;
 
     const manualRes = BaseProfile.getMaxResolution();
     if (manualRes) {
@@ -550,7 +553,12 @@ export function buildJellyfinProfile(options = {}) {
     // --------------------------------------------------------------------------
 
     // Primary HLS container: driven ONLY by the user's explicit fMP4 setting.
-    const primaryHlsContainer = forceFmp4Hls ? 'mp4' : 'ts';
+    // Experimental DTS HLS output requires an fMP4 container (MPEG-TS HLS is
+    // not a usable DTS transcode target in Jellyfin's streaming pipeline).
+    // This does not affect native Direct Play or the AV1 fMP4 preference.
+    const preferredTranscodeCodec = PlayerSettings.get('transcodeAudioCodec') || 'auto';
+    const dtsTranscodeRequested = preferredTranscodeCodec === 'prefer_dts' || preferredTranscodeCodec === 'force_dts';
+    const primaryHlsContainer = (dtsTranscodeRequested && !isHtml5) || forceFmp4Hls ? 'mp4' : 'ts';
 
     // -------------------------------------------------------------------------
     // Resolve the effective EAC3 support flag for THIS profile build.
@@ -728,8 +736,6 @@ export function buildJellyfinProfile(options = {}) {
     //   'aac'  — AAC (last resort for devices that can't handle AC3/EAC3 in HLS)
     // ---------------------------------------------------------------------------
 
-    const preferredTranscodeCodec = PlayerSettings.get('transcodeAudioCodec') || 'auto';
-
     // =========================================================================
     // Transcode Target Codec Resolution
     // =========================================================================
@@ -748,6 +754,14 @@ export function buildJellyfinProfile(options = {}) {
         if (caps.ac3) transAudioCodecsArr.push('ac3');
         transAudioCodecsArr.push('aac', 'mp3');
         if (enableMp2) transAudioCodecsArr.push('mp2');
+    } else if (preferredTranscodeCodec === 'prefer_dts') {
+        // Experimental fMP4 HLS DTS encoder, with broadly supported fallback codecs.
+        // HTML5/hls.js uses AAC instead: MSE cannot reliably play DTS.
+        if (!isHtml5) transAudioCodecsArr.push('dts', 'ac3', 'aac');
+        else transAudioCodecsArr.push('aac');
+    } else if (preferredTranscodeCodec === 'force_dts') {
+        if (!isHtml5) transAudioCodecsArr.push('dts');
+        else transAudioCodecsArr.push('aac');
     } else if (preferredTranscodeCodec === 'prefer_ac3') {
         // Prefer AC3 (with AAC fallback) -> AC3 first, then AAC/MP3 fallback.
         // EAC3 is strictly excluded so the server never upgrades to E-AC3.
@@ -817,7 +831,7 @@ export function buildJellyfinProfile(options = {}) {
                 mseSupports('video/mp4; codecs="hev1.1.6.L120.90"'));
     }
 
-    // NOTE: DTS and TrueHD are deliberately NOT added here (see comment above).
+    // DTS is offered in HLS only when explicitly selected as an experimental fMP4 transcode target; TrueHD remains excluded.
     // ---------------------------------------------------------------------------
     // DirectStream audio codec list (DirectStreamProfiles).
     //
@@ -992,7 +1006,7 @@ export function buildJellyfinProfile(options = {}) {
                 VideoCodec: transVideoCodecs,
                 Context: 'Streaming',
                 Protocol: 'hls',
-                MaxAudioChannels: transMaxAudioChannels,
+                MaxAudioChannels: audioCodec === 'dts' ? Math.min(6, transMaxAudioChannels) : transMaxAudioChannels,
                 MinSegments: isHtml5 ? 1 : 2,
                 SegmentLength: effectiveSegmentLength,
                 // BreakOnNonKeyFrames with fMP4: must be true for HTML5/HLS.js
