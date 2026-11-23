@@ -19,6 +19,11 @@ import { MoviVideoPlayer } from './MoviVideoPlayer.js';
 import { ExoVideoPlayer } from './ExoVideoPlayer.js';
 import { platformInfo } from '../../utils/PlatformInfo.js';
 import { MediaHelper } from './MediaHelper.js';
+import {
+    isDolbyTrack,
+    shouldUseDolbyProgressiveCopy,
+    applyDolbyProgressiveCopy
+} from './WebOSDolbyProgressiveTest.js';
 import { buildJellyfinProfile, getDeviceCapabilities } from '../../api/DeviceProfile.js';
 import { BaseProfile } from '../../api/profiles/BaseProfile.js';
 import SubtitleManager, { DeliveryMethod } from './SubtitleManager.js';
@@ -1978,6 +1983,41 @@ export class JellyfinPlayer extends EventEmitter {
                 throw new Error('Media source not found');
             }
 
+            // A/B diagnostic: leave DTS and other formats on Litefin's regular
+            // transport. For AC3/EAC3 in MKV, ask Jellyfin for a progressive
+            // MKV with -c:v copy and -c:a copy, then use native WebOSPlayer.
+            const useDolbyCopy = shouldUseDolbyProgressiveCopy({
+                backendType: this._backendType,
+                mediaSource,
+                audioStreamIndex: options.audioStreamIndex,
+                playbackMode: options.playbackMode,
+                userPlaybackMode: this._userPlaybackMode,
+                manualBitrate: this._manualBitrate,
+                isLiveTv,
+                escalated: this._directPlayEscalated
+            });
+            const wasHls = Boolean(mediaSource.TranscodingUrl?.includes('.m3u8'));
+            const didDolbyCopy = useDolbyCopy && applyDolbyProgressiveCopy(mediaSource, {
+                itemId: options.itemId,
+                playSessionId: playbackInfo.PlaySessionId,
+                authToken: this.authToken,
+                audioStreamIndex: options.audioStreamIndex,
+                startPositionTicks: options.startPositionTicks || 0
+            });
+            if (this._backendType === 'webos') {
+                log.warn('[DolbyProgressiveTest] Stream transport:', {
+                    codec: (mediaSource.MediaStreams || []).find(s =>
+                        s.Type === 'Audio' && Number(s.Index) === Number(options.audioStreamIndex)
+                    )?.Codec,
+                    audioStreamIndex: options.audioStreamIndex,
+                    originalServerHls: wasHls,
+                    progressiveCopyEligible: useDolbyCopy,
+                    progressiveCopyApplied: didDolbyCopy,
+                    transport: didDolbyCopy ? 'progressive-mkv-video-audio-copy' : 'upstream',
+                    urlPath: didDolbyCopy ? '/Videos/.../stream.mkv' : '(unchanged)'
+                });
+            }
+
             if (mediaSource.TranscodingInfo) {
                 log.info(`[PlaybackMode] IsDirectStream: ${mediaSource.TranscodingInfo.IsVideoDirect ? 'Yes' : 'No'}`);
             }
@@ -3137,7 +3177,14 @@ export class JellyfinPlayer extends EventEmitter {
         const isTranscoding = this._currentPlayMethod === 'Transcode' ||
             this._currentPlayMethod === 'DirectStream' ||
             this._currentPlayMethod === 'Remux';
-        const requiresRestart = isTranscoding || !isTargetCodecSupported || (this._backendType !== 'tizen' && this._backendType !== 'movi' && this._backendType !== 'exoplayer' && !supportsNativeAudio);
+        // Testing a different transport, not an in-place track-toggle:
+        // selecting any AC3/EAC3 track must restart into stream.mkv, including
+        // a physical default track or a track selected while DTS is playing.
+        const selectedDolbyForCopy = this._backendType === 'webos' &&
+            isDolbyTrack(this._currentMediaSource, index);
+        const requiresRestart = selectedDolbyForCopy || isTranscoding || !isTargetCodecSupported ||
+            (this._backendType !== 'tizen' && this._backendType !== 'movi' &&
+             this._backendType !== 'exoplayer' && !supportsNativeAudio);
 
         log.info(`setAudioStreamIndex: index=${index} playMethod=${this._currentPlayMethod} requiresRestart=${requiresRestart} isTargetCodecSupported=${isTargetCodecSupported}`);
 
