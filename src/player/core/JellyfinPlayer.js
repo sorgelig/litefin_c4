@@ -91,6 +91,7 @@ import {
     hasContainerWithoutAudioTracks,
     doesAudioTrackRequireDirectStream
 } from './StreamUtils.js';
+import { canVirtualizeMkv } from './WebOSVirtualMkv.js';
 
 export {
     isTrueHdSupported,
@@ -1890,11 +1891,16 @@ export class JellyfinPlayer extends EventEmitter {
             // Determine if the requested audio track requires server remuxing (DirectStream)
             // This catches non-default passthrough tracks (DTS, TrueHD, FLAC) on WebOS/HTML5
             // that Chromium cannot switch natively in progressive DirectPlay.
-            const trackRequiresDirectStream = activeMs && options.audioStreamIndex !== undefined && options.audioStreamIndex !== null
+            // A webOS virtual-MKV session hides all other audio tracks before
+            // the native decoder sees the source. No FFmpeg remux is needed.
+            const virtualMkvEligible = canVirtualizeMkv(activeMs, options.audioStreamIndex,
+                this._backendType, this._playbackMode);
+            options._virtualMkvEligible = virtualMkvEligible;
+            const trackRequiresDirectStream = activeMs && !virtualMkvEligible && options.audioStreamIndex !== undefined && options.audioStreamIndex !== null
                 ? doesAudioTrackRequireDirectStream(activeMs, options.audioStreamIndex, this._backendType)
                 : false;
 
-            const needsDirectStreamForAudio = options._forceDirectStream ||
+            const needsDirectStreamForAudio = (options._forceDirectStream && !virtualMkvEligible) ||
                 trackRequiresDirectStream ||
                 (isHtml5Backend && !supportsNativeAudio && (isCustomAudioTrack || !isFirstAudioTrack));
 
@@ -1932,6 +1938,12 @@ export class JellyfinPlayer extends EventEmitter {
             // When Force Direct Play (audio or all) is enabled, direct play profiles must remain intact.
             if (needsDirectStreamForAudio && !isAudioDirectPlayForced) {
                 deviceProfile.DirectPlayProfiles = [];
+            }
+            // Virtual MKV needs the ORIGINAL static file, never an HLS remux.
+            // Only override automatic negotiation; explicit transcode/remux
+            // playback modes remain untouched.
+            if (virtualMkvEligible && profilePlaybackMode === 'auto') {
+                options._virtualMkvPreferDirectPlay = true;
             }
 
             // Apply Subtitle Mode logic before fetching PlaybackInfo
@@ -3103,7 +3115,8 @@ export class JellyfinPlayer extends EventEmitter {
         const isTranscoding = this._currentPlayMethod === 'Transcode' ||
             this._currentPlayMethod === 'DirectStream' ||
             this._currentPlayMethod === 'Remux';
-        const requiresRestart = isTranscoding || !isTargetCodecSupported || (this._backendType !== 'tizen' && this._backendType !== 'movi' && this._backendType !== 'exoplayer' && !supportsNativeAudio);
+        const switchingVirtualMkv = this._backendType === 'webos' && this._backend?.isVirtualMkvActive?.() === true;
+        const requiresRestart = switchingVirtualMkv || isTranscoding || !isTargetCodecSupported || (this._backendType !== 'tizen' && this._backendType !== 'movi' && this._backendType !== 'exoplayer' && !supportsNativeAudio);
 
         log.info(`setAudioStreamIndex: index=${index} playMethod=${this._currentPlayMethod} requiresRestart=${requiresRestart} isTargetCodecSupported=${isTargetCodecSupported}`);
 
@@ -3170,7 +3183,8 @@ export class JellyfinPlayer extends EventEmitter {
                 this._userPlaybackMode === 'transcode' || this._userPlaybackMode === 'remux'
                     ? this._userPlaybackMode
                     : 'auto';
-            const restartPlaybackMode = baseMode === 'transcode' ? 'transcode'
+            const restartPlaybackMode = switchingVirtualMkv ? 'directPlay'
+                : baseMode === 'transcode' ? 'transcode'
                 : (!isTargetCodecSupported || needsDirectStreamForAudio) ? 'auto'
                     : baseMode;
 
@@ -3181,7 +3195,7 @@ export class JellyfinPlayer extends EventEmitter {
                 secondarySubtitleStreamIndex: this._currentSecondarySubtitleStreamIndex,
                 startPositionTicks: currentTicks,
                 playbackMode: restartPlaybackMode,
-                _forceDirectStream: needsDirectStreamForAudio
+                _forceDirectStream: switchingVirtualMkv ? false : needsDirectStreamForAudio
             };
 
             // Persist so future restarts (bitrate change, etc.) carry the right track
@@ -4558,7 +4572,7 @@ export class JellyfinPlayer extends EventEmitter {
         // ---------------------------------------------------------------------
         // The prewarm is only reused when it was requested with the same
         // bitrate limit (a quality change in the OSD lowers it)
-        const prewarmedPromise = prewarmManager.consumePlaybackInfo(options.itemId, {
+        const prewarmedPromise = options._virtualMkvPreferDirectPlay ? null : prewarmManager.consumePlaybackInfo(options.itemId, {
             ...options,
             maxStreamingBitrate: maxBitrate
         });
@@ -4742,6 +4756,12 @@ export class JellyfinPlayer extends EventEmitter {
             } else if (forceDirectPlaySetting === 'audio') {
                 currentMode = 'forceDirectPlayAudio';
             }
+        }
+
+        // The original static MKV is required by the local header-only proxy.
+        // Never override explicit user mode, server transcoding setting, or cap.
+        if (currentMode === 'auto' && options._virtualMkvPreferDirectPlay) {
+            currentMode = 'directPlay';
         }
 
         switch (currentMode) {
