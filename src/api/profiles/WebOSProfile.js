@@ -340,9 +340,7 @@ function _buildMinimalProfile(caps, isHtml5 = false) {
     // the experimental DTS option selected on the C4's native webOS backend.
     const preferred = PlayerSettings.get('transcodeAudioCodec');
     const dtsRequested = !isHtml5 && (preferred === 'prefer_dts' || preferred === 'force_dts');
-    const audioTargets = dtsRequested
-        ? (preferred === 'force_dts' ? ['dts'] : ['dts', 'ac3', 'aac'])
-        : ['aac'];
+    const audioTargets = dtsRequested ? ['dts'] : ['aac'];
     return {
         Name: 'Litefin WebOS (Forced Transcode)',
         MaxStreamingBitrate: PlayerSettings.get('maxBitrateInternet') || 40000000,
@@ -759,14 +757,11 @@ export function buildJellyfinProfile(options = {}) {
         if (caps.ac3) transAudioCodecsArr.push('ac3');
         transAudioCodecsArr.push('aac', 'mp3');
         if (enableMp2) transAudioCodecsArr.push('mp2');
-    } else if (preferredTranscodeCodec === 'prefer_dts') {
-        // Experimental fMP4 HLS DTS encoder, with broadly supported fallback codecs.
-        // HTML5/hls.js uses AAC instead: MSE cannot reliably play DTS.
-        if (!isHtml5) transAudioCodecsArr.push('dts', 'ac3', 'aac');
-        else transAudioCodecsArr.push('aac');
-    } else if (preferredTranscodeCodec === 'force_dts') {
-        if (!isHtml5) transAudioCodecsArr.push('dts');
-        else transAudioCodecsArr.push('aac');
+    } else if (preferredTranscodeCodec === 'force_dts' || preferredTranscodeCodec === 'prefer_dts') {
+        // DTS is the ONLY encoding target when audio must be transcoded.
+        // 'prefer_dts' is retained as a backward-compatible stored-setting alias.
+        // HTML5/hls.js cannot reliably consume DTS HLS, so it uses AAC.
+        transAudioCodecsArr.push(isHtml5 ? 'aac' : 'dts');
     } else if (preferredTranscodeCodec === 'prefer_ac3') {
         // Prefer AC3 (with AAC fallback) -> AC3 first, then AAC/MP3 fallback.
         // EAC3 is strictly excluded so the server never upgrades to E-AC3.
