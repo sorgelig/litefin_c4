@@ -89,6 +89,9 @@ export function applyProgressiveAudioCopy(mediaSource, audioStreamIndex, startPo
 
     mediaSource.TranscodingUrl = url;
     mediaSource.TranscodingContainer = 'mkv';
+    // The progressive stream contains only the selected track; do not ask the
+    // native webOS audioTracks API to select another track from that stream.
+    mediaSource._webosProgressiveAudioCopy = true;
     mediaSource.SupportsDirectPlay = false;
     mediaSource.SupportsDirectStream = true;
     mediaSource.TranscodingInfo = {
