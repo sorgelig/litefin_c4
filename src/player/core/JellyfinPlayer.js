@@ -1993,7 +1993,7 @@ export class JellyfinPlayer extends EventEmitter {
                 playbackMode: options.playbackMode,
                 userPlaybackMode: this._userPlaybackMode,
                 manualBitrate: this._manualBitrate,
-                isLiveTv,
+                isLiveTv: isLiveChannel,
                 escalated: this._directPlayEscalated
             });
             const wasHls = Boolean(mediaSource.TranscodingUrl?.includes('.m3u8'));
