@@ -54,10 +54,9 @@ export function buildProgressiveAudioCopyUrl(transcodingUrl, audioStreamIndex, s
     } catch {
         return null;
     }
-    if (!/\\/Videos\\/[^/]+\\/master\\.m3u8$/i.test(url.pathname)) return null;
-    const match = /^(.*)\\/master\\.m3u8$/i.exec(url.pathname);
-    if (!match) return null;
-    url.pathname = match[1] + '/stream.mkv';
+    const suffix = '/master.m3u8';
+    if (!url.pathname.includes('/Videos/') || !url.pathname.endsWith(suffix)) return null;
+    url.pathname = url.pathname.slice(0, -suffix.length) + '/stream.mkv';
 
     for (const key of [
         'SegmentContainer', 'SegmentLength', 'MinSegments',
