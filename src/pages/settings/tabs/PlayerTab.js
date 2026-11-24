@@ -9,6 +9,7 @@
 
 import { PlayerSettings } from '../../../utils/PlayerSettings.js';
 import { platformInfo } from '../../../utils/PlatformInfo.js';
+import { EAC3_BITRATES } from '../../../player/core/WebOSEac3Bitrate.js';
 import { i18n } from '../../../utils/i18n.js';
 import { logger } from '../../../utils/Logger.js';
 import { getDeviceCapabilities, clearCapabilitiesCache } from '../../../api/DeviceProfile.js';
@@ -435,6 +436,12 @@ export class PlayerTab {
                         PlayerSettings.get('transcodeAudioCodec') || 'auto'
                     )}</div>
                 </div>
+
+                ${platformInfo.isWebOS ? `
+                <div class="setting-item">
+                    <div class="setting-label"><span class="setting-name">E-AC3 Transcode Bitrate</span><span class="setting-description">Requested bitrate for Dolby Digital Plus encoding. Above 640 kbps requires a patched Jellyfin server; higher rates may exceed receiver limits.</span></div>
+                    <div class="setting-control">${this._drop('eac3-transcode-bitrate-select', EAC3_BITRATES.map(value => ({ value, label: value === 0 ? 'Server default' : `${value / 1000} kbps` })), Number(PlayerSettings.get('eac3TranscodeBitrate') ?? 1536000))}</div>
+                </div>` : ''}
 
                 ${CODEC_ITEMS.slice(7)
                     .map(

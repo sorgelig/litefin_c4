@@ -19,7 +19,7 @@ import { MoviVideoPlayer } from './MoviVideoPlayer.js';
 import { ExoVideoPlayer } from './ExoVideoPlayer.js';
 import { platformInfo } from '../../utils/PlatformInfo.js';
 import { MediaHelper } from './MediaHelper.js';
-import { requestEac3Bitrate, EAC3_TEST_BITRATE } from './WebOSEac3Bitrate.js';
+import { requestEac3Bitrate } from './WebOSEac3Bitrate.js';
 import { buildJellyfinProfile } from '../../api/DeviceProfile.js';
 import { BaseProfile } from '../../api/profiles/BaseProfile.js';
 import SubtitleManager, { DeliveryMethod } from './SubtitleManager.js';
@@ -2367,9 +2367,10 @@ export class JellyfinPlayer extends EventEmitter {
 
             // Only adjust the negotiated E-AC3 encode path. DirectPlay (including
             // virtual MKV), remux, and non-EAC3 codecs are unchanged.
+            const eac3Bitrate = PlayerSettings.get('eac3TranscodeBitrate');
             if (requestEac3Bitrate(mediaSource, playMethod, this._backendType,
-                MediaHelper.getTranscodeStatus(mediaSource).isAudioDirect)) {
-                log.info('[EAC3 bitrate experiment] Requested', EAC3_TEST_BITRATE,
+                MediaHelper.getTranscodeStatus(mediaSource).isAudioDirect, eac3Bitrate)) {
+                log.info('[EAC3 bitrate] Requested', eac3Bitrate,
                     'bps; verify actual encoder bitrate in Jellyfin FFmpeg log');
             }
 

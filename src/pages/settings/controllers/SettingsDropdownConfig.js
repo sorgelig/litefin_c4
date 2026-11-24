@@ -165,6 +165,7 @@ export function getSettingsDropdownMap() {
         'eac3-force-select': { type: 'player', key: 'enableEac3' },
         'mp2-force-select': { type: 'player', key: 'enableMp2' },
         'transcode-audio-codec-select': { type: 'player', key: 'transcodeAudioCodec' },
+        'eac3-transcode-bitrate-select': { type: 'player', key: 'eac3TranscodeBitrate' },
         'watched-threshold-select': { type: 'player', key: 'watchedThreshold' },
 
         // WebOS Specific Hardware Buffer Gates

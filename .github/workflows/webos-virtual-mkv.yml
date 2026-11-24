@@ -1,9 +1,9 @@
-name: Build WebOS EAC3 1536 experiment
+name: Build WebOS EAC3 bitrate selector
 
 on:
   push:
     branches:
-      - experiment/webos-eac3-1536
+      - experiment/webos-eac3-bitrate-select
   workflow_dispatch:
 
 permissions:
@@ -25,6 +25,9 @@ jobs:
           node --check services/virtual-mkv.js
           node --check src/player/core/JellyfinPlayer.js
           node --check src/player/core/WebOSPlayer.js
+          node --check src/pages/settings/tabs/PlayerTab.js
+          node --check src/pages/settings/controllers/SettingsDropdownConfig.js
+          node --check src/pages/settings/controllers/SettingsDropdownDispatcher.js
           node --test tests/WebOSVirtualMkv.test.js tests/WebOSEac3Bitrate.test.js
       - name: Build webOS Modern IPK
         run: |
@@ -32,7 +35,7 @@ jobs:
           npm run package:webos-modern
       - uses: actions/upload-artifact@v4
         with:
-          name: Litefin-webOS-EAC3-1536
+          name: Litefin-webOS-EAC3-Bitrate-Selector
           path: Litefin-*-webOS-Modern.ipk
           if-no-files-found: error
           retention-days: 30

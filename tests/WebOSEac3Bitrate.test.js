@@ -32,3 +32,17 @@ test('never modify direct play, remux, audio copy, other codecs or other backend
         assert.equal(source.TranscodingUrl, url);
     }
 });
+
+test('user-selected EAC3 bitrate, including server default and invalid input', () => {
+    const url = '/Videos/id/master.m3u8?AudioCodec=eac3&AudioBitrate=640000';
+    for (const value of [640000, 768000, 1024000, 1536000, 2048000, 3072000, 4096000, 6144000, '2048000']) {
+        const source = { TranscodingUrl: url };
+        assert.equal(requestEac3Bitrate(source, 'DirectStream', 'webos', false, value), true);
+        assert.equal(source.TranscodingUrl, url.replace('640000', String(value)));
+    }
+    for (const value of [0, '0', null, -1, 7000000, 'invalid']) {
+        const source = { TranscodingUrl: url };
+        assert.equal(requestEac3Bitrate(source, 'DirectStream', 'webos', false, value), false);
+        assert.equal(source.TranscodingUrl, url);
+    }
+});

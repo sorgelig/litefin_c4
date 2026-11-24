@@ -191,6 +191,8 @@ const DEFAULTS = {
     // NOTE: This only affects HLS transcode output.DirectPlay/DirectStream paths
     // bypass this entirely — the source audio is copied as-is in those cases.
     transcodeAudioCodec: 'auto',
+    // E-AC3 bitrate in bps for actual webOS audio encoding only; 0 = server default.
+    eac3TranscodeBitrate: 1536000,
 
     // Allow FLAC audio in video containers (MKV, MP4, etc.) to DirectPlay.
     // Disabled by default: FLAC demuxing inside video containers causes a ~2s

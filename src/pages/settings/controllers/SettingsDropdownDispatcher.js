@@ -334,6 +334,7 @@ export class SettingsDropdownDispatcher {
             'skipBackLength',
             'resumeRewindLength',
             'maxBitrateInternet',
+            'eac3TranscodeBitrate',
             'webosStallRecovery',
             'webosSegmentLength',
             'tizenInitialBuffer',
