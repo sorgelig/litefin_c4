@@ -284,9 +284,11 @@ export const MediaHelper = {
      */
     getTranscodeStatus(mediaSource) {
         const transcodeInfo = mediaSource.TranscodingInfo;
+        const forceAudioEncode = !!mediaSource._litefinEac3AtmosEncode || /[?&]AllowAudioStreamCopy=false(?:&|$)/i.test(mediaSource.TranscodingUrl || '');
+        const forceVideoEncode = /[?&]AllowVideoStreamCopy=false(?:&|$)/i.test(mediaSource.TranscodingUrl || '');
 
         // Prefer server-provided TranscodingInfo when available (session hub updates)
-        if (transcodeInfo && !mediaSource._litefinEac3AtmosEncode) {
+        if (transcodeInfo && !forceAudioEncode && !forceVideoEncode) {
             return {
                 isVideoDirect: !!(transcodeInfo.IsVideoDirect || !transcodeInfo.VideoCodec),
                 isAudioDirect: !!transcodeInfo.IsAudioDirect
@@ -304,10 +306,13 @@ export const MediaHelper = {
         const reasonsMatch = transcodeUrl.match(/[?&]TranscodeReasons=([^&]+)/);
         if (!reasonsMatch) {
             // URL exists but no reason listed → conservatively assume full transcode
+            const codecs = (transcodeUrl.match(/[?&]VideoCodec=([^&]+)/i) || [])[1] || '';
+            const video = mediaSource.MediaStreams?.find(s => s.Type === 'Video');
+            const allowed = decodeURIComponent(codecs).toLowerCase().split(',');
             return {
-                isVideoDirect: !!mediaSource._litefinEac3AtmosEncode &&
-                    /[?&]VideoCodec=copy(?:&|$)/i.test(transcodeUrl) &&
-                    !/[?&]AllowVideoStreamCopy=false(?:&|$)/i.test(transcodeUrl),
+                isVideoDirect: forceAudioEncode && !forceVideoEncode &&
+                    (allowed.includes('copy') || (video?.Codec && allowed.includes(video.Codec.toLowerCase()))) &&
+                    !this.isVideoOverTranscodeLimits(mediaSource),
                 isAudioDirect: false
             };
         }
@@ -344,7 +349,7 @@ export const MediaHelper = {
         ]);
 
         let isVideoDirect = !reasonList.some(r => VIDEO_REASONS.has(r));
-        let isAudioDirect = !mediaSource._litefinEac3AtmosEncode && !reasonList.some(r => AUDIO_ONLY_REASONS.has(r));
+        let isAudioDirect = !forceAudioEncode && !reasonList.some(r => AUDIO_ONLY_REASONS.has(r));
 
         // Generic reasons like DirectPlayError or ContainerNotSupported don't explicitly declare 
         // which stream is being re-encoded. To guarantee accuracy, we manually check if the 
@@ -353,16 +358,16 @@ export const MediaHelper = {
         const allowedAudioCodecsStr = (transcodeUrl.match(/[?&]AudioCodec=([^&]+)/) || [])[1];
 
         if (allowedVideoCodecsStr) {
-            const allowedVideoCodecs = allowedVideoCodecsStr.toLowerCase().split(',');
+            const allowedVideoCodecs = decodeURIComponent(allowedVideoCodecsStr).toLowerCase().split(',');
             const videoStream = mediaSource.MediaStreams?.find(s => s.Type === 'Video');
             if (videoStream && videoStream.Codec && !allowedVideoCodecs.includes(videoStream.Codec.toLowerCase()) &&
-                !(mediaSource._litefinEac3AtmosEncode && allowedVideoCodecs.includes('copy'))) {
+                !(forceAudioEncode && allowedVideoCodecs.includes('copy'))) {
                 isVideoDirect = false;
             }
         }
 
         if (allowedAudioCodecsStr) {
-            const allowedAudioCodecs = allowedAudioCodecsStr.toLowerCase().split(',');
+            const allowedAudioCodecs = decodeURIComponent(allowedAudioCodecsStr).toLowerCase().split(',');
             const audioStreamIndexStr = (transcodeUrl.match(/[?&]AudioStreamIndex=([^&]+)/) || [])[1];
             let audioStream;
             if (audioStreamIndexStr) {
@@ -380,7 +385,7 @@ export const MediaHelper = {
         // A bitrate limit (e.g. a lower quality picked in the OSD) re-encodes the
         // video with only ContainerBitrateExceedsLimit as the reason, and with
         // the source codec still in VideoCodec
-        if (mediaSource._litefinEac3AtmosEncode && /[?&]AllowVideoStreamCopy=false(?:&|$)/i.test(transcodeUrl)) isVideoDirect = false;
+        if (forceVideoEncode) isVideoDirect = false;
         if (isVideoDirect && this.isVideoOverTranscodeLimits(mediaSource)) {
             isVideoDirect = false;
         }

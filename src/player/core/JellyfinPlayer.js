@@ -20,6 +20,7 @@ import { ExoVideoPlayer } from './ExoVideoPlayer.js';
 import { platformInfo } from '../../utils/PlatformInfo.js';
 import { MediaHelper } from './MediaHelper.js';
 import { requestEac3Bitrate } from './WebOSEac3Bitrate.js';
+import { chooseWebOSFailureMode } from './WebOSAudioVideoCopy.js';
 import { selectedAudioTrack, needsEac3AtmosEncode, forceEac3AtmosRequest, markEac3AtmosEncode } from './WebOSEac3Atmos.js';
 import { buildJellyfinProfile } from '../../api/DeviceProfile.js';
 import { BaseProfile } from '../../api/profiles/BaseProfile.js';
@@ -1334,12 +1335,14 @@ export class JellyfinPlayer extends EventEmitter {
                 this._playbackMode !== 'transcode';
 
             if (canEscalate) {
-                // Prevent cyclic escalation cascades if transcoding also errors
-                this._directPlayEscalated = true;
+                const fallbackMode = this._getFailureFallbackMode();
+                // Audio-only recovery is an intermediate step; allow one full
+                // transcode if it actually fails.
+                this._directPlayEscalated = fallbackMode === 'transcode';
                 const errorDesc = event.data?.error || event.data?.message || 'Playback error';
                 log.warn(
                     `[JellyfinPlayer] ${this._currentPlayMethod || 'DirectPlay'} failed on ${this._backendType} (${errorDesc}). ` +
-                    `Escalating session to server transcoding...`
+                    `Escalating session to ${fallbackMode}...`
                 );
 
                 // Preserve exact timestamp where DirectPlay errored
@@ -1350,7 +1353,8 @@ export class JellyfinPlayer extends EventEmitter {
                     subtitleStreamIndex: this._currentSubtitleStreamIndex,
                     secondarySubtitleStreamIndex: this._currentSecondarySubtitleStreamIndex,
                     startPositionTicks: currentTicks,
-                    playbackMode: 'transcode'
+                    playbackMode: fallbackMode,
+                    _webosAudioFallback: fallbackMode === 'transcodeAudio'
                 };
 
                 // Store options and flag restarting state to suppress transient stop events
@@ -1407,6 +1411,19 @@ export class JellyfinPlayer extends EventEmitter {
      * @param {string} playMethod - Method derived by MediaHelper.getPlayMethod()
      * @returns {string} 'Remux' or 'DirectStream' when the video is copied, else playMethod
      */
+    _getFailureFallbackMode() {
+        if (this._backendType !== 'webos' || this._manualBitrate > 0 ||
+            PlayerSettings.get('forceTranscode')) return 'transcode';
+        return chooseWebOSFailureMode({
+            backend: this._backendType,
+            mode: this._playbackMode,
+            method: this._currentPlayMethod,
+            source: this._currentMediaSource,
+            profile: buildJellyfinProfile({ playbackMode: 'auto', backend: 'webos' }),
+            manualBitrate: this._manualBitrate
+        });
+    }
+
     _resolveForcedRemuxPlayMethod(mediaSource, playMethod) {
         // A source above the URL's bitrate or size limits is re-encoded even in remux mode
         if (MediaHelper.isVideoOverTranscodeLimits(mediaSource)) {
@@ -2805,7 +2822,8 @@ export class JellyfinPlayer extends EventEmitter {
                 isAutoTranscodeEnabled &&
                 backendLoadFailed &&
                 !error?.isNetworkError &&
-                !this._isRestarting &&
+                (!this._isRestarting || (options._webosAudioFallback &&
+                    this._playbackMode === 'transcodeAudio' && this._restartOwner === options)) &&
                 !this._directPlayEscalated &&
                 this._currentPlayOptions &&
                 // A forced remux copies the video even when labelled 'Transcode'
@@ -2813,10 +2831,11 @@ export class JellyfinPlayer extends EventEmitter {
                 this._playbackMode !== 'transcode';
 
             if (canEscalate) {
-                this._directPlayEscalated = true;
+                const fallbackMode = this._getFailureFallbackMode();
+                this._directPlayEscalated = fallbackMode === 'transcode';
                 log.warn(
                     `[JellyfinPlayer] DirectPlay setup failed (${error?.message || error}). ` +
-                    `Escalating session to server transcoding...`
+                    `Escalating session to ${fallbackMode}...`
                 );
 
                 const currentTicks = this.getCurrentPositionTicks() || this._currentPlayOptions.startPositionTicks || 0;
@@ -2826,7 +2845,8 @@ export class JellyfinPlayer extends EventEmitter {
                     subtitleStreamIndex: this._currentSubtitleStreamIndex,
                     secondarySubtitleStreamIndex: this._currentSecondarySubtitleStreamIndex,
                     startPositionTicks: currentTicks,
-                    playbackMode: 'transcode'
+                    playbackMode: fallbackMode,
+                    _webosAudioFallback: fallbackMode === 'transcodeAudio'
                 };
 
                 this._currentPlayOptions = restartOptions;
@@ -4675,7 +4695,8 @@ export class JellyfinPlayer extends EventEmitter {
         // ---------------------------------------------------------------------
         // The prewarm is only reused when it was requested with the same
         // bitrate limit (a quality change in the OSD lowers it)
-        const prewarmedPromise = forceAtmosEncode ? null : prewarmManager.consumePlaybackInfo(options.itemId, {
+        const prewarmedPromise = (forceAtmosEncode || options.playbackMode === 'transcodeAudio' ||
+            this._playbackMode === 'transcodeAudio') ? null : prewarmManager.consumePlaybackInfo(options.itemId, {
             ...options,
             maxStreamingBitrate: maxBitrate
         });

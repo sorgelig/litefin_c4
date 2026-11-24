@@ -8,6 +8,7 @@
 
 import { logger } from '../../utils/Logger.js';
 import { platformInfo } from '../../utils/PlatformInfo.js';
+import { nativeHlsVideoCodecs } from '../../player/core/WebOSAudioVideoCopy.js';
 import { PlayerSettings } from '../../utils/PlayerSettings.js';
 import { BaseProfile } from './BaseProfile.js';
 import { webosAdapter } from '../../webos/WebOSAdapter.js';
@@ -835,7 +836,11 @@ export function buildJellyfinProfile(options = {}) {
     if (enableTrueHd) directAudioCodecsArr.push('truehd');
     const directAudioCodecs = directAudioCodecsArr.join(',');
 
-    let transVideoCodecs = hevcInHls ? 'h264,hevc' : 'h264';
+    const hlsVideoCodecs = (container) => nativeHlsVideoCodecs({
+        hevc: hevcInHls, av1: enableAV1, vp9: enableVP9,
+        native: !isHtml5, container
+    });
+    let transVideoCodecs = hlsVideoCodecs(primaryHlsContainer);
 
     if (playbackMode === 'remux') {
         // -----------------------------------------------------------------------
@@ -847,10 +852,12 @@ export function buildJellyfinProfile(options = {}) {
     } else if (playbackMode === 'transcodeAudio') {
         // -----------------------------------------------------------------------
         // Transcode Audio Only:
-        //   Video → copy verbatim (same as remux — 'copy' passes video through)
-        //   Audio → always re-encoded to the preferred transcode target codec
+        //   Video → negotiate the original supported codec and stream-copy it.
+        //   Audio → always re-encoded to the preferred transcode target codec.
+        // Jellyfin filters HLS codec lists; "copy" is not a video codec.
+        // Retain real codec names so the server recognizes HEVC/AV1 as supported.
         // -----------------------------------------------------------------------
-        transVideoCodecs = 'copy';
+        transVideoCodecs = hlsVideoCodecs(primaryHlsContainer);
     } else if (playbackMode === 'transcodeVideo') {
         // -----------------------------------------------------------------------
         // Transcode Video Only:
@@ -989,7 +996,8 @@ export function buildJellyfinProfile(options = {}) {
                 Container: 'mp4',
                 Type: 'Video',
                 AudioCodec: audioCodec,
-                VideoCodec: transVideoCodecs,
+                VideoCodec: playbackMode === 'remux' || playbackMode === 'transcodeVideo'
+                    ? transVideoCodecs : hlsVideoCodecs('mp4'),
                 Context: 'Streaming',
                 Protocol: 'hls',
                 MaxAudioChannels: transMaxAudioChannels,
@@ -1221,7 +1229,10 @@ export function buildJellyfinProfile(options = {}) {
         //   into an fMP4 segment that Jellyfin tags as hvc1, giving WebOS the
         //   signal it needs to activate the hardware DV pipeline.
         // -----------------------------------------------------------------------
-        if (primaryHlsContainer === 'mp4') {
+        // The native pipeline can remux HEVC regardless of the source fourcc.
+        // An MKV has no hvc1/dvh1 tag; requiring one here incorrectly rejects
+        // video copy when only audio needs transcoding. Preserve the HTML5 gate.
+        if (primaryHlsContainer === 'mp4' && isHtml5) {
             codecProfiles.push({
                 Type: 'Video',
                 Codec: 'hevc',

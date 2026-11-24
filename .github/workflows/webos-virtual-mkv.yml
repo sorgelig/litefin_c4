@@ -1,9 +1,9 @@
-name: Build WebOS EAC3 Atmos passthrough control
+name: Build WebOS audio fallback video copy
 
 on:
   push:
     branches:
-      - experiment/webos-eac3-atmos
+      - experiment/webos-audio-copy-video
   workflow_dispatch:
 
 permissions:
@@ -28,14 +28,14 @@ jobs:
           node --check src/pages/settings/tabs/PlayerTab.js
           node --check src/pages/settings/controllers/SettingsDropdownConfig.js
           node --check src/pages/settings/controllers/SettingsDropdownDispatcher.js
-          node --test tests/WebOSVirtualMkv.test.js tests/WebOSEac3Bitrate.test.js tests/WebOSEac3Atmos.test.js
+          node --test tests/WebOSVirtualMkv.test.js tests/WebOSEac3Bitrate.test.js tests/WebOSEac3Atmos.test.js tests/WebOSAudioVideoCopy.test.js
       - name: Build webOS Modern IPK
         run: |
           mkdir -p .sign
           npm run package:webos-modern
       - uses: actions/upload-artifact@v4
         with:
-          name: Litefin-webOS-EAC3-Atmos
+          name: Litefin-webOS-Audio-Copy-Video
           path: Litefin-*-webOS-Modern.ipk
           if-no-files-found: error
           retention-days: 30
