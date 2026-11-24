@@ -1312,6 +1312,35 @@ body.webos-cursor-active .osd-btn.focused .osd-icon {
     pointer-events: all;
 }
 
+/*
+ * webOS hardware video punch-through: the Tizen-only translateZ promotion
+ * can put the translucent modal backdrop in the wrong compositor layer.
+ * Keep the overlay in normal 2D stacking order and render its dimmer as a
+ * separate solid surface. The opacity setting affects only the dimmer, not
+ * the text and controls. Avoid animating the entire overlay's opacity on LG.
+ */
+html[data-platform="webos"] .track-menu-overlay {
+    background: transparent;
+    -webkit-transform: none;
+    transform: none;
+    -webkit-transition: none;
+    transition: none;
+}
+
+html[data-platform="webos"] .track-menu-overlay::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    background-color: #000;
+    opacity: var(--osd-track-menu-bg-opacity, 0.85);
+    pointer-events: none;
+    z-index: -1;
+}
+
+
 .track-menu {
     background: transparent;
     padding: 1.8em;
