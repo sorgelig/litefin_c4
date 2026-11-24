@@ -13,7 +13,6 @@ const https = require('https');
 const crypto = require('crypto');
 
 const HEADER_LIMIT = 32 * 1024 * 1024;
-const SESSION_TTL = 6 * 60 * 60 * 1000;
 const sessions = new Map();
 
 function vint(buffer, off, isId) {
@@ -118,52 +117,37 @@ function json(res, status, body) {
     res.end(data);
 }
 
-function register(req, res) {
-    let chunks = [], size = 0;
-    req.on('data', chunk => {
-        size += chunk.length;
-        if (size > 16384) { req.destroy(); return; }
-        chunks.push(chunk);
+async function prepare(input) {
+    const target = new URL(input.url);
+    if (!['http:', 'https:'].includes(target.protocol)) throw Error('Invalid source URL');
+    if (!/\/Videos\/[^/]+\/stream\.(?:mkv|matroska)$/i.test(target.pathname) || String(target.searchParams.get('Static')).toLowerCase() !== 'true') throw Error('Source must be an original Jellyfin MKV stream');
+    const headers = {};
+    for (const [name, value] of Object.entries(input.headers || {})) {
+        if (!/^(range|host|content-length|connection|accept-encoding|transfer-encoding)$/i.test(name) && typeof value === 'string') headers[name] = value;
+    }
+    const ordinal = Number(input.audioOrdinal);
+    const { buffer, size } = await fetchHeader(target.href, headers);
+    const audio = parseAudio(buffer);
+    if (!Number.isSafeInteger(ordinal) || ordinal < 0 || ordinal >= audio.length || audio.length < 2 || audio.length !== input.audioCount) {
+        throw Error('Audio track count/ordinal mismatch');
+    }
+    const patches = new Map();
+    audio.forEach((entry, i) => {
+        if (i !== ordinal) patches.set(entry.off, 0xec);
+        else if (entry.flag !== null) patches.set(entry.flag, 1);
     });
-    req.on('end', async () => {
-        try {
-            const input = JSON.parse(Buffer.concat(chunks).toString());
-            const target = new URL(input.url);
-            if (!['http:', 'https:'].includes(target.protocol)) throw Error('Invalid source URL');
-            if (!/\/Videos\/[^/]+\/stream\.(?:mkv|matroska)$/i.test(target.pathname)) throw Error('Source must be an original Jellyfin MKV stream');
-            const headers = {};
-            for (const [name, value] of Object.entries(input.headers || {})) {
-                if (/^(authorization|x-emby-token|x-mediabrowser-token|cookie|cf-access-client-id|cf-access-client-secret)$/i.test(name) && typeof value === 'string') {
-                    headers[name] = value;
-                }
-            }
-            const ordinal = Number(input.audioOrdinal);
-            const { buffer, size } = await fetchHeader(target.href, headers);
-            const audio = parseAudio(buffer);
-            if (!Number.isSafeInteger(ordinal) || ordinal < 0 || ordinal >= audio.length || audio.length < 2) {
-                throw Error('Invalid audio ordinal / not a multitrack MKV');
-            }
-            const patches = new Map();
-            audio.forEach((entry, i) => {
-                if (i !== ordinal) patches.set(entry.off, 0xec);
-                else if (entry.flag !== null) patches.set(entry.flag, 1);
-            });
-            for (const [key, value] of sessions) {
-                if (Date.now() - value.created > SESSION_TTL) sessions.delete(key);
-            }
-            const token = crypto.randomBytes(18).toString('hex');
-            sessions.set(token, { url: target.href, headers, size, patches, created: Date.now() });
-            json(res, 200, { url: 'http://127.0.0.1:8123/virtual-mkv/' + token + '/movie.mkv', audioCount: audio.length });
-        } catch (err) {
-            console.error('[VirtualMKV] registration failed:', err.message);
-            json(res, 422, { error: err.message });
-        }
-    });
+    const token = crypto.randomBytes(18).toString('hex');
+    sessions.set(token, { url: target.href, headers, size, patches, created: Date.now() });
+    return { token, url: 'http://127.0.0.1:8123/virtual-mkv/' + token + '/movie.mkv', audioCount: audio.length };
+}
+
+function release(token) {
+    sessions.delete(token);
 }
 
 function serve(req, res, token) {
     const session = sessions.get(token);
-    if (!session || Date.now() - session.created > SESSION_TTL) {
+    if (!session) {
         sessions.delete(token);
         return json(res, 404, { error: 'Unknown or expired stream' });
     }
@@ -235,13 +219,9 @@ function invalidRange(res, size) {
 }
 
 function handle(req, res, path) {
-    if (path === '/virtual-mkv/session') {
-        if (req.method !== 'POST') return json(res, 405, { error: 'Method not allowed' });
-        return register(req, res);
-    }
     const match = /^\/virtual-mkv\/([0-9a-f]{36})\/movie\.mkv$/.exec(path);
     if (match && (req.method === 'GET' || req.method === 'HEAD')) return serve(req, res, match[1]);
     return json(res, 404, { error: 'Not found' });
 }
 
-module.exports = { handle, parseAudio };
+module.exports = { handle, parseAudio, prepare, release };
