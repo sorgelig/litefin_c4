@@ -257,7 +257,7 @@ export default class PlaybackInfo extends BaseMenu {
             // first (AC-3 for AudioCodec=eac3,ac3 from DTS:X 7.1), so all are named
             const outAudioCodec  = (transUrl.match(/[?&]AudioCodec=([^&]+)/) || [])[1]?.split(',').join('/').toUpperCase();
             const outAudioBpsRaw = parseFloat((transUrl.match(/[?&]AudioBitrate=([^&]+)/) || [])[1]);
-            const outAudioBps    = outAudioBpsRaw ? (outAudioBpsRaw / 1000).toFixed(0) + ' kbps' : null;
+            const outAudioBps    = outAudioBpsRaw ? (outAudioBpsRaw / 1000).toFixed(0) + ' kbps (requested)' : null;
 
             // Build human-readable codec strings: "SRC (copy)" or "SRC → OUT @ BITRATE"
             const srcVideo = videoStream?.Codec?.toUpperCase() || i18n.t('None');
