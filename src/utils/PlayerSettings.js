@@ -165,6 +165,8 @@ const DEFAULTS = {
     // 'enable'  — force EAC3 into the profile regardless of what the probe says
     // 'disable' — explicitly exclude EAC3 even if the probe says it is supported
     enableEac3: 'auto',
+    // Separate DD+ JOC passthrough policy; plain E-AC3 remains unchanged.
+    enableEac3Atmos: 'enable',
     enableMp2: 'auto',
 
     // -------------------------------------------------------------------------

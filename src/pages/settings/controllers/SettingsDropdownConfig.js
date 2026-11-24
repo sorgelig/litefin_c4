@@ -163,6 +163,7 @@ export function getSettingsDropdownMap() {
         'dts-force-select': { type: 'player', key: 'enableDts' },
         'truehd-force-select': { type: 'player', key: 'enableTrueHd' },
         'eac3-force-select': { type: 'player', key: 'enableEac3' },
+        'eac3-atmos-force-select': { type: 'player', key: 'enableEac3Atmos' },
         'mp2-force-select': { type: 'player', key: 'enableMp2' },
         'transcode-audio-codec-select': { type: 'player', key: 'transcodeAudioCodec' },
         'eac3-transcode-bitrate-select': { type: 'player', key: 'eac3TranscodeBitrate' },

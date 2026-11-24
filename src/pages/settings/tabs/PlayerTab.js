@@ -439,6 +439,10 @@ export class PlayerTab {
 
                 ${platformInfo.isWebOS ? `
                 <div class="setting-item">
+                    <div class="setting-label"><span class="setting-name">E-AC3 Atmos Passthrough</span><span class="setting-description">Disable to re-encode Dolby Digital Plus Atmos (JOC) to regular E-AC3. Plain Dolby Digital Plus is unaffected.</span></div>
+                    <div class="setting-control">${this._drop('eac3-atmos-force-select', [{value:'enable', label:i18n.t('Enabled') || 'Enabled'}, {value:'disable', label:i18n.t('Disabled') || 'Disabled'}], PlayerSettings.get('enableEac3Atmos') || 'enable')}</div>
+                </div>
+                <div class="setting-item">
                     <div class="setting-label"><span class="setting-name">E-AC3 Transcode Bitrate</span><span class="setting-description">Requested bitrate for Dolby Digital Plus encoding. Above 640 kbps requires a patched Jellyfin server; higher rates may exceed receiver limits.</span></div>
                     <div class="setting-control">${this._drop('eac3-transcode-bitrate-select', EAC3_BITRATES.map(value => ({ value, label: value === 0 ? 'Server default' : `${value / 1000} kbps` })), Number(PlayerSettings.get('eac3TranscodeBitrate') ?? 1536000))}</div>
                 </div>` : ''}
