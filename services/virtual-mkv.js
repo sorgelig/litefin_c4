@@ -85,11 +85,11 @@ function openSource(url, headers, range, onResponse, onError) {
     return request;
 }
 
-function fetchHeader(url, headers) {
+function fetchHeader(url, headers, limit) {
     return new Promise((resolve, reject) => {
         let request;
         try {
-            request = openSource(url, headers, 'bytes=0-' + (HEADER_LIMIT - 1), upstream => {
+            request = openSource(url, headers, 'bytes=0-' + (limit - 1), upstream => {
                 const cr = /^bytes\s+(\d+)-(\d+)\/(\d+)$/i.exec(upstream.headers['content-range'] || '');
                 if (upstream.statusCode !== 206 || !cr || Number(cr[1]) !== 0) {
                     upstream.destroy();
@@ -101,7 +101,7 @@ function fetchHeader(url, headers) {
                 let length = 0;
                 upstream.on('data', chunk => {
                     length += chunk.length;
-                    if (length > HEADER_LIMIT) { upstream.destroy(); reject(Error('MKV header too large')); return; }
+                    if (length > limit) { upstream.destroy(); reject(Error('MKV header too large')); return; }
                     parts.push(chunk);
                 });
                 upstream.on('end', () => resolve({ buffer: Buffer.concat(parts), size: total }));
@@ -126,8 +126,20 @@ async function prepare(input) {
         if (!/^(range|host|content-length|connection|accept-encoding|transfer-encoding)$/i.test(name) && typeof value === 'string') headers[name] = value;
     }
     const ordinal = Number(input.audioOrdinal);
-    const { buffer, size } = await fetchHeader(target.href, headers);
-    const audio = parseAudio(buffer);
+    let audio, size;
+    for (let limit = 256 * 1024; limit <= HEADER_LIMIT; limit *= 4) {
+        const header = await fetchHeader(target.href, headers, limit);
+        size = header.size;
+        try { audio = parseAudio(header.buffer); break; }
+        catch (error) {
+            if (header.buffer.length >= size || limit === HEADER_LIMIT) throw error;
+        }
+    }
+    if (!audio) {
+        const header = await fetchHeader(target.href, headers, HEADER_LIMIT);
+        size = header.size;
+        audio = parseAudio(header.buffer);
+    }
     if (!Number.isSafeInteger(ordinal) || ordinal < 0 || ordinal >= audio.length || audio.length < 2 || audio.length !== input.audioCount) {
         throw Error('Audio track count/ordinal mismatch');
     }
