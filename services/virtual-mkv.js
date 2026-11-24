@@ -77,11 +77,13 @@ function openSource(url, headers, range, onResponse, onError) {
     const target = new URL(url);
     if (target.protocol !== 'http:' && target.protocol !== 'https:') throw Error('Unsupported source protocol');
     const transport = target.protocol === 'https:' ? https : http;
-    return transport.get(target, {
+    const request = transport.get(target, {
         headers: { ...headers, Range: range, 'Accept-Encoding': 'identity' },
         timeout: 30000,
         agent: false
     }, onResponse).on('error', onError);
+    request.on('timeout', () => request.destroy(Error('Upstream timeout')));
+    return request;
 }
 
 function fetchHeader(url, headers) {
@@ -146,6 +148,9 @@ function register(req, res) {
                 if (i !== ordinal) patches.set(entry.off, 0xec);
                 else if (entry.flag !== null) patches.set(entry.flag, 1);
             });
+            for (const [key, value] of sessions) {
+                if (Date.now() - value.created > SESSION_TTL) sessions.delete(key);
+            }
             const token = crypto.randomBytes(18).toString('hex');
             sessions.set(token, { url: target.href, headers, size, patches, created: Date.now() });
             json(res, 200, { url: 'http://127.0.0.1:8123/virtual-mkv/' + token + '/movie.mkv', audioCount: audio.length });
@@ -213,12 +218,12 @@ function serve(req, res, token) {
             res.on('drain', () => upstream.resume());
             upstream.on('end', () => res.end());
             upstream.on('error', () => res.destroy());
-            req.on('close', () => upstream.destroy());
+            res.on('close', () => upstream.destroy());
         }, err => {
             console.error('[VirtualMKV] upstream:', err.message);
             if (responded) res.destroy(); else if (!res.headersSent) json(res, 502, { error: 'Upstream failed' });
         });
-        req.on('close', () => outgoing.destroy());
+        res.on('close', () => outgoing.destroy());
     } catch (err) {
         json(res, 502, { error: err.message });
     }
