@@ -34,6 +34,52 @@ import { i18n } from '../../utils/i18n.js';
 
 const log = logger.create('JellyfinPlayer');
 
+// Experimental C4 workaround: the native decoder receives one visible audio
+// TrackEntry. Keep Jellyfin's full track inventory for the menu and reporting.
+function virtualMkvAudio(source, index) {
+    if (!source || !['mkv', 'matroska'].includes(String(source.Container).toLowerCase()) ||
+        source.RequiresOpening || source.LiveStreamId || source.IsRemote ||
+        (source.Protocol && source.Protocol !== 'File')) return null;
+    const tracks = (source.MediaStreams || []).filter(s => s.Type === 'Audio' && !s.IsExternal);
+    const ordinal = tracks.findIndex(s => Number(s.Index) === Number(index));
+    return tracks.length > 1 && ordinal >= 0 ? { audioOrdinal: ordinal, audioCount: tracks.length } : null;
+}
+
+function prepareVirtualMkv(url, headers, audio) {
+    let subscription;
+    let timer;
+    const promise = new Promise((resolve, reject) => {
+        if (typeof window === 'undefined' || !window.webOS?.service?.request) {
+            reject(new Error('webOS service unavailable'));
+            return;
+        }
+        timer = setTimeout(() => {
+            subscription?.cancel();
+            reject(new Error('Virtual MKV service timeout'));
+        }, 20000);
+        try {
+            subscription = window.webOS.service.request('luna://org.litefin.app.service', {
+                method: 'virtualMkv',
+                parameters: { subscribe: true, url, headers, ...audio },
+                subscribe: true,
+                onSuccess: result => {
+                    clearTimeout(timer);
+                    if (result.returnValue && result.url) resolve(result.url);
+                    else reject(new Error(result.errorText || 'Virtual MKV preparation failed'));
+                },
+                onFailure: result => {
+                    clearTimeout(timer);
+                    reject(new Error(result.errorText || 'Virtual MKV service failed'));
+                }
+            });
+        } catch (error) {
+            clearTimeout(timer);
+            reject(error);
+        }
+    });
+    return { promise, cancel: () => { clearTimeout(timer); subscription?.cancel(); } };
+}
+
 /**
  * PlaybackInfo request timeout. Matches ApiClient's request timeout; it stays
  * generous because the server may open a live stream (AutoOpenLiveStream)
@@ -1894,9 +1940,12 @@ export class JellyfinPlayer extends EventEmitter {
                 ? doesAudioTrackRequireDirectStream(activeMs, options.audioStreamIndex, this._backendType)
                 : false;
 
-            const needsDirectStreamForAudio = options._forceDirectStream ||
+            const virtualCandidate = this._backendType === 'webos' && !options._forceDirectStream &&
+                !this._manualBitrate && virtualMkvAudio(activeMs, options.audioStreamIndex) &&
+                isAudioTrackNativelyPlayable(activeMs.MediaStreams.find(s => Number(s.Index) === Number(options.audioStreamIndex)), activeMs, this._backendType);
+            const needsDirectStreamForAudio = !virtualCandidate && (options._forceDirectStream ||
                 trackRequiresDirectStream ||
-                (isHtml5Backend && !supportsNativeAudio && (isCustomAudioTrack || !isFirstAudioTrack));
+                (isHtml5Backend && !supportsNativeAudio && (isCustomAudioTrack || !isFirstAudioTrack)));
 
             // Determine effective playback mode for profiling
             let profilePlaybackMode = this._playbackMode;
@@ -2485,6 +2534,37 @@ export class JellyfinPlayer extends EventEmitter {
                 });
             }
 
+            // The service subscription both owns the Range proxy session and
+            // prevents webOS from suspending it while the native decoder reads.
+            this._virtualMkvSubscription?.cancel();
+            this._virtualMkvSubscription = null;
+            this._virtualMkvActive = false;
+            const virtualAudio = this._backendType === 'webos' && playMethod === 'DirectPlay' &&
+                !streamInfo.isHls && !this._manualBitrate && options.item?.Type !== 'TvChannel' &&
+                virtualMkvAudio(mediaSource, this._currentAudioStreamIndex);
+            if (virtualAudio) {
+                const proxy = prepareVirtualMkv(streamInfo.url, streamHeaders, virtualAudio);
+                this._virtualMkvSubscription = proxy;
+                try {
+                    const virtualUrl = await proxy.promise;
+                    if (isSuperseded()) {
+                        proxy.cancel();
+                        return abandon('virtual MKV preparation');
+                    }
+                    backendOptions.url = virtualUrl;
+                    backendOptions.virtualMkv = true;
+                    backendOptions.audioTrackListIndex = 0;
+                    backendOptions.headers = {};
+                    this._virtualMkvActive = true;
+                    log.info('[VirtualMKV] DirectPlay with selected audio track', this._currentAudioStreamIndex);
+                } catch (error) {
+                    proxy.cancel();
+                    if (this._virtualMkvSubscription === proxy) this._virtualMkvSubscription = null;
+                    if (isSuperseded()) return abandon('virtual MKV preparation');
+                    log.warn('[VirtualMKV] Falling back to original stream:', error.message);
+                }
+            }
+
             // Instruct the resolved backend (TizenAVPlayer, WebOSPlayer, or HTML5) to initialize
             try {
                 await this._backend.play(backendOptions);
@@ -2879,6 +2959,10 @@ export class JellyfinPlayer extends EventEmitter {
             await this._backend.stop();
         }
 
+        this._virtualMkvSubscription?.cancel();
+        this._virtualMkvSubscription = null;
+        this._virtualMkvActive = false;
+
         // Only clear state if NOT restarting
         if (!isRestartStop) {
             this._pendingStartPositionTicks = null;
@@ -3047,6 +3131,8 @@ export class JellyfinPlayer extends EventEmitter {
      * @param {number} index - Audio stream index (Jellyfin ID)
      */
     async setAudioStreamIndex(index) {
+        const virtualSwitch = this._virtualMkvActive && Number(this._currentAudioStreamIndex) !== Number(index);
+        if (this._virtualMkvActive && !virtualSwitch) return;
         // ====================================================================
         // Prewarm Cache Invalidation
         // ====================================================================
@@ -3103,7 +3189,7 @@ export class JellyfinPlayer extends EventEmitter {
         const isTranscoding = this._currentPlayMethod === 'Transcode' ||
             this._currentPlayMethod === 'DirectStream' ||
             this._currentPlayMethod === 'Remux';
-        const requiresRestart = isTranscoding || !isTargetCodecSupported || (this._backendType !== 'tizen' && this._backendType !== 'movi' && this._backendType !== 'exoplayer' && !supportsNativeAudio);
+        const requiresRestart = virtualSwitch || isTranscoding || !isTargetCodecSupported || (this._backendType !== 'tizen' && this._backendType !== 'movi' && this._backendType !== 'exoplayer' && !supportsNativeAudio);
 
         log.info(`setAudioStreamIndex: index=${index} playMethod=${this._currentPlayMethod} requiresRestart=${requiresRestart} isTargetCodecSupported=${isTargetCodecSupported}`);
 
@@ -3151,8 +3237,10 @@ export class JellyfinPlayer extends EventEmitter {
                 }
             }
 
-            const needsDirectStreamForAudio = trackRequiresDirectStream ||
-                (this._backendType !== 'tizen' && this._backendType !== 'movi' && this._backendType !== 'exoplayer' && !supportsNativeAudio && (isCustomAudioTrack || !isFirstAudioTrack));
+            const useVirtualSwitch = virtualSwitch && isTargetCodecSupported &&
+                virtualMkvAudio(this._currentMediaSource, index);
+            const needsDirectStreamForAudio = !useVirtualSwitch && (trackRequiresDirectStream ||
+                (this._backendType !== 'tizen' && this._backendType !== 'movi' && this._backendType !== 'exoplayer' && !supportsNativeAudio && (isCustomAudioTrack || !isFirstAudioTrack)));
 
             // ────────────────────────────────────────────────────────────────
             // Calculate Restart Playback Mode
