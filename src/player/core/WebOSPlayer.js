@@ -1957,8 +1957,10 @@ export class WebOSPlayer {
                 ? `— Hls.js tracks: ${describeAudioTracks(hls.audioTracks)}`
                 : `— native tracks: ${describeAudioTracks(this._videoElement && this._videoElement.audioTracks)}`);
 
+        // Virtual MKV exposes exactly one audio track; never toggle it or
+        // request a server remux when the native audioTracks array is empty.
         // ---- Audio track ----
-        if (options.audioStreamIndex !== undefined && options.audioStreamIndex !== null) {
+        if (!options.virtualMkv && options.audioStreamIndex !== undefined && options.audioStreamIndex !== null) {
             // JellyfinPlayer precomputes the backend-visible list index because
             // WebOS may hide unsupported passthrough tracks from audioTracks.
             const resolvedIndex = options.audioTrackListIndex >= 0 ? options.audioTrackListIndex : 0;
