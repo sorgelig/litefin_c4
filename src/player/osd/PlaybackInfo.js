@@ -110,7 +110,33 @@ export default class PlaybackInfo extends BaseMenu {
         const resolvedPlayMethod = typeof this.player.getCurrentPlayMethod === 'function'
             ? this.player.getCurrentPlayMethod()
             : null;
-        const playMethod = mediaSource ? (resolvedPlayMethod || MediaHelper.getPlayMethod(mediaSource)) : 'DirectPlay';
+        let playMethod = mediaSource ? (resolvedPlayMethod || MediaHelper.getPlayMethod(mediaSource)) : 'DirectPlay';
+
+        // Jellyfin strips the "copy" pseudo-codec from HLS negotiation, sometimes
+        // returning no VideoCodec with VideoCodecNotSupported even though FFmpeg
+        // copies the video. Only correct the display for explicit audio-only
+        // requests. Do not change runtime playMethod or master/main HLS routing.
+        if (this.player.backendType === 'webos' && playMethod === 'Transcode' && mediaSource?.TranscodingUrl) {
+            const url = mediaSource.TranscodingUrl;
+            const explicitAudioEncode = mediaSource._litefinEac3AtmosEncode ||
+                /[?&]AllowAudioStreamCopy=false(?:&|$)/i.test(url);
+            const explicitVideoEncode = /[?&]AllowVideoStreamCopy=false(?:&|$)/i.test(url);
+            const videoCodec = decodeURIComponent((url.match(/[?&]VideoCodec=([^&#]*)/i) || [])[1] || '').toLowerCase();
+            const reasons = decodeURIComponent((url.match(/[?&]TranscodeReasons=([^&#]*)/i) || [])[1] || '')
+                .split(',').map(r => r.trim()).filter(Boolean);
+            const otherVideoFailure = reasons.some(r =>
+                (r.startsWith('Video') && r !== 'VideoCodecNotSupported') ||
+                ['UnknownVideoStreamInfo', 'RefFramesNotSupported', 'AnamorphicVideoNotSupported',
+                    'InterlacedVideoNotSupported', 'SubtitleCodecNotSupported'].includes(r));
+            const video = mediaSource.MediaStreams?.find(s => s.Type === 'Video');
+            const actual = mediaSource.TranscodingInfo;
+            if (explicitAudioEncode && !explicitVideoEncode && video?.Codec &&
+                !MediaHelper.isVideoOverTranscodeLimits(mediaSource) &&
+                (actual ? actual.IsVideoDirect === true :
+                    (!otherVideoFailure && (!videoCodec || videoCodec === 'copy')))) {
+                playMethod = 'DirectStream';
+            }
+        }
         
         /*
          * -----------------------------------------------------------------

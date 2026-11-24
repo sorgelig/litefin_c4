@@ -114,7 +114,7 @@ test('PlaybackInfo: a forced direct stream shows the video copied and the audio 
     assert.strictEqual(value(rows, 'LabelPlayMethod'), 'DirectStreaming');
     assert.strictEqual(value(rows, 'LabelVideoCodec'), 'H264 (copy)');
     // The server picks one of the listed codecs (AC-3 for this DTS:X file on the C4)
-    assert.strictEqual(value(rows, 'LabelAudioCodec'), 'DTS → EAC3/AC3 @ 640 kbps');
+    assert.strictEqual(value(rows, 'LabelAudioCodec'), 'DTS → EAC3/AC3 @ 640 kbps (requested)');
     assert.strictEqual(value(rows, 'LabelTranscodeReasons'), 'AudioCodecNotSupported, DirectPlayError');
 });
 
@@ -127,7 +127,7 @@ test('PlaybackInfo: a real transcode still shows Transcoding (guard)', () => {
     const rows = render(hevc, 'Transcode');
     assert.strictEqual(value(rows, 'LabelPlayMethod'), 'Transcoding');
     assert.strictEqual(value(rows, 'LabelVideoCodec'), 'HEVC → H264');
-    assert.strictEqual(value(rows, 'LabelAudioCodec'), 'EAC3 → AAC @ 384 kbps');
+    assert.strictEqual(value(rows, 'LabelAudioCodec'), 'EAC3 → AAC @ 384 kbps (requested)');
     assert.strictEqual(value(rows, 'LabelTranscodeReasons'), 'VideoCodecNotSupported, AudioCodecNotSupported');
 });
 
@@ -139,4 +139,39 @@ test('PlaybackInfo: without a resolved method the panel derives it from the medi
 test('PlaybackInfo: the transcode reasons label has an English text', () => {
     const english = JSON.parse(readFileSync(new URL('../src/locales/en-us.json', import.meta.url), 'utf8'));
     assert.strictEqual(typeof english.LabelTranscodeReasons, 'string');
+});
+
+test('PlaybackInfo: Atmos audio-only encode with omitted VideoCodec is shown as video copy', () => {
+    const src = mediaSource('eac3',
+        'AudioCodec=eac3&AudioBitrate=3072000&VideoBitrate=116928000&AllowAudioStreamCopy=false&TranscodeReasons=VideoCodecNotSupported,DirectPlayError');
+    src.MediaStreams[0].Codec = 'hevc';
+    src._litefinEac3AtmosEncode = true;
+    const rows = render(src, 'Transcode');
+    assert.strictEqual(value(rows, 'LabelPlayMethod'), 'DirectStreaming');
+    assert.strictEqual(value(rows, 'LabelVideoCodec'), 'HEVC (copy)');
+    assert.strictEqual(value(rows, 'LabelAudioCodec'), 'EAC3 → EAC3 @ 3072 kbps (requested)');
+    assert.strictEqual(value(rows, 'LabelTranscodeReasons'), 'DirectPlayError');
+    // Display correction must not rewrite the playback URL.
+    assert.ok(!src.TranscodingUrl.includes('VideoCodec='));
+});
+test('PlaybackInfo: do not infer copy when video needs encoding', () => {
+    const prefix = 'AudioCodec=eac3&AudioBitrate=3072000&AllowAudioStreamCopy=false&';
+    for (const query of [
+        'VideoCodec=h264&VideoBitrate=116928000&TranscodeReasons=VideoCodecNotSupported',
+        'AllowVideoStreamCopy=false&VideoBitrate=116928000&TranscodeReasons=DirectPlayError',
+        'VideoBitrate=100000&TranscodeReasons=VideoCodecNotSupported',
+        'MaxWidth=640&TranscodeReasons=VideoCodecNotSupported',
+        'VideoBitrate=116928000&TranscodeReasons=SubtitleCodecNotSupported'
+    ]) {
+        const src = mediaSource('eac3',prefix+query);
+        src.MediaStreams[0].Codec = 'hevc';
+        src._litefinEac3AtmosEncode = true;
+        assert.strictEqual(value(render(src,'Transcode'),'LabelPlayMethod'),'Transcoding');
+    }
+});
+test('PlaybackInfo: actual server video encode status overrides an inferred copy', () => {
+    const src = mediaSource('eac3','AudioCodec=eac3&AllowAudioStreamCopy=false&VideoBitrate=116928000&TranscodeReasons=VideoCodecNotSupported');
+    src._litefinEac3AtmosEncode = true;
+    src.TranscodingInfo = { IsVideoDirect:false, VideoCodec:'h264', IsAudioDirect:false };
+    assert.strictEqual(value(render(src,'Transcode'),'LabelPlayMethod'),'Transcoding');
 });
