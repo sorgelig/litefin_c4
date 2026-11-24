@@ -20,7 +20,7 @@ import { ExoVideoPlayer } from './ExoVideoPlayer.js';
 import { platformInfo } from '../../utils/PlatformInfo.js';
 import { MediaHelper } from './MediaHelper.js';
 import { requestEac3Bitrate } from './WebOSEac3Bitrate.js';
-import { selectedAudioTrack, needsEac3AtmosEncode, forceEac3AtmosRequest, markEac3AtmosEncode } from './WebOSEac3Atmos.js';
+import { selectedAudioTrack, requiredAudioEncode, forceEac3AtmosRequest, markEac3AtmosEncode, markTrueHdEncode } from './WebOSEac3Atmos.js';
 import { buildJellyfinProfile } from '../../api/DeviceProfile.js';
 import { BaseProfile } from '../../api/profiles/BaseProfile.js';
 import SubtitleManager, { DeliveryMethod } from './SubtitleManager.js';
@@ -2003,19 +2003,20 @@ export class JellyfinPlayer extends EventEmitter {
 
             // Get playback info from server
             const atmosSetting = PlayerSettings.get('enableEac3Atmos');
-            let atmosTrack = selectedAudioTrack(activeMs, options.audioStreamIndex);
-            let forceAtmosEncode = needsEac3AtmosEncode(atmosTrack, this._backendType, atmosSetting);
-            if (forceAtmosEncode) options.audioStreamIndex = atmosTrack.Index;
-            let playbackInfo = await this._getPlaybackInfo(options, deviceProfile, this._manualBitrate, forceAtmosEncode);
+            const trueHdSetting = PlayerSettings.get('enableTrueHd');
+            let selectedTrack = selectedAudioTrack(activeMs, options.audioStreamIndex);
+            let forceTrackEncode = requiredAudioEncode(selectedTrack, this._backendType, atmosSetting, trueHdSetting);
+            if (forceTrackEncode) options.audioStreamIndex = selectedTrack.Index;
+            let playbackInfo = await this._getPlaybackInfo(options, deviceProfile, this._manualBitrate, forceTrackEncode);
             if (isSuperseded()) return abandon('PlaybackInfo');
-            if (!forceAtmosEncode && this._backendType === 'webos' && atmosSetting === 'disable') {
+            if (!forceTrackEncode && this._backendType === 'webos' && (atmosSetting === 'disable' || trueHdSetting === 'disable')) {
                 const returnedSource = playbackInfo?.MediaSources?.find(ms => ms.Id === options.mediaSourceId) ||
                     playbackInfo?.MediaSources?.[0];
-                atmosTrack = selectedAudioTrack(returnedSource, options.audioStreamIndex);
-                if (needsEac3AtmosEncode(atmosTrack, this._backendType, atmosSetting)) {
-                    forceAtmosEncode = true;
-                    options.audioStreamIndex = atmosTrack.Index;
-                    playbackInfo = await this._getPlaybackInfo(options, deviceProfile, this._manualBitrate, true);
+                selectedTrack = selectedAudioTrack(returnedSource, options.audioStreamIndex);
+                forceTrackEncode = requiredAudioEncode(selectedTrack, this._backendType, atmosSetting, trueHdSetting);
+                if (forceTrackEncode) {
+                    options.audioStreamIndex = selectedTrack.Index;
+                    playbackInfo = await this._getPlaybackInfo(options, deviceProfile, this._manualBitrate, forceTrackEncode);
                 }
             }
             if (isSuperseded()) return abandon('PlaybackInfo');
@@ -2044,7 +2045,8 @@ export class JellyfinPlayer extends EventEmitter {
                 throw new Error('Media source not found');
             }
 
-            if (forceAtmosEncode) markEac3AtmosEncode(mediaSource);
+            if (forceTrackEncode === 'eac3-atmos') markEac3AtmosEncode(mediaSource);
+            if (forceTrackEncode === 'truehd') markTrueHdEncode(mediaSource);
 
             if (mediaSource.TranscodingInfo) {
                 log.info(`[PlaybackMode] IsDirectStream: ${mediaSource.TranscodingInfo.IsVideoDirect ? 'Yes' : 'No'}`);
@@ -2068,7 +2070,7 @@ export class JellyfinPlayer extends EventEmitter {
             // In "Force Remux" mode, the server might report "Transcode" because it technically
             // falls back to the transcoding pipeline while it copies the video.
             const wasForcedRemux = (this._playbackMode === 'remux' || (typeof profilePlaybackMode !== 'undefined' && profilePlaybackMode === 'remux'));
-            if (!forceAtmosEncode && wasForcedRemux && playMethod === 'Transcode') {
+            if (!forceTrackEncode && wasForcedRemux && playMethod === 'Transcode') {
                 playMethod = this._resolveForcedRemuxPlayMethod(mediaSource, playMethod);
                 if (playMethod !== 'Transcode') {
                     // MediaHelper.getPlayMethod() still reads this source as a
@@ -3198,7 +3200,7 @@ export class JellyfinPlayer extends EventEmitter {
             const targetTrack = AudioTracks.find(t => t.Index === index);
 
             if (targetTrack) {
-                isTargetCodecSupported = !needsEac3AtmosEncode(targetTrack, this._backendType, PlayerSettings.get('enableEac3Atmos')) &&
+                isTargetCodecSupported = !requiredAudioEncode(targetTrack, this._backendType, PlayerSettings.get('enableEac3Atmos'), PlayerSettings.get('enableTrueHd')) &&
                     isAudioTrackNativelyPlayable(targetTrack, this._currentMediaSource, this._backendType);
             }
         }
@@ -4665,7 +4667,7 @@ export class JellyfinPlayer extends EventEmitter {
      * Get playback info from Jellyfin server
      * @private
      */
-    async _getPlaybackInfo(options, deviceProfile, manualBitrate = null, forceAtmosEncode = false) {
+    async _getPlaybackInfo(options, deviceProfile, manualBitrate = null, forceTrackEncode = null) {
         // Read max bitrate: priority to deviceProfile if passed (it contains the logic)
         // Fallback to manualBitrate or 120Mbps
         const maxBitrate = deviceProfile?.MaxStreamingBitrate || manualBitrate || 120000000;
@@ -4675,7 +4677,7 @@ export class JellyfinPlayer extends EventEmitter {
         // ---------------------------------------------------------------------
         // The prewarm is only reused when it was requested with the same
         // bitrate limit (a quality change in the OSD lowers it)
-        const prewarmedPromise = forceAtmosEncode ? null : prewarmManager.consumePlaybackInfo(options.itemId, {
+        const prewarmedPromise = forceTrackEncode ? null : prewarmManager.consumePlaybackInfo(options.itemId, {
             ...options,
             maxStreamingBitrate: maxBitrate
         });
@@ -5095,7 +5097,7 @@ export class JellyfinPlayer extends EventEmitter {
         }
 
 
-        if (forceAtmosEncode && !isAudioItem) {
+        if (forceTrackEncode && !isAudioItem) {
             // Override even Force Direct Play for this explicitly disabled input format,
             // but honor an explicit request to transcode video.
             const copyVideo = currentMode !== 'transcode' && currentMode !== 'transcodeVideo';
@@ -5104,8 +5106,8 @@ export class JellyfinPlayer extends EventEmitter {
                 playbackMode: copyVideo ? 'transcodeAudio' : 'transcode',
                 backend: this._backendType
             });
-            forceEac3AtmosRequest(requestBody, encodeProfile, options.audioStreamIndex, copyVideo);
-            log.info('[EAC3 Atmos] Passthrough disabled: requesting ordinary E-AC3 encode for track', options.audioStreamIndex);
+            forceEac3AtmosRequest(requestBody, encodeProfile, options.audioStreamIndex, copyVideo, forceTrackEncode === 'eac3-atmos');
+            log.info('[Selected audio policy] Passthrough disabled:', forceTrackEncode, 'encoding track', options.audioStreamIndex);
         }
 
         if (!isAudioItem) {

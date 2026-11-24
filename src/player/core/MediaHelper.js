@@ -286,7 +286,7 @@ export const MediaHelper = {
         const transcodeInfo = mediaSource.TranscodingInfo;
 
         // Prefer server-provided TranscodingInfo when available (session hub updates)
-        if (transcodeInfo && !mediaSource._litefinEac3AtmosEncode) {
+        if (transcodeInfo && !mediaSource._litefinEac3AtmosEncode && !mediaSource._litefinForcedAudioEncode) {
             return {
                 isVideoDirect: !!(transcodeInfo.IsVideoDirect || !transcodeInfo.VideoCodec),
                 isAudioDirect: !!transcodeInfo.IsAudioDirect
@@ -344,7 +344,7 @@ export const MediaHelper = {
         ]);
 
         let isVideoDirect = !reasonList.some(r => VIDEO_REASONS.has(r));
-        let isAudioDirect = !mediaSource._litefinEac3AtmosEncode && !reasonList.some(r => AUDIO_ONLY_REASONS.has(r));
+        let isAudioDirect = !mediaSource._litefinEac3AtmosEncode && !mediaSource._litefinForcedAudioEncode && !reasonList.some(r => AUDIO_ONLY_REASONS.has(r));
 
         // Generic reasons like DirectPlayError or ContainerNotSupported don't explicitly declare 
         // which stream is being re-encoded. To guarantee accuracy, we manually check if the 
@@ -380,7 +380,7 @@ export const MediaHelper = {
         // A bitrate limit (e.g. a lower quality picked in the OSD) re-encodes the
         // video with only ContainerBitrateExceedsLimit as the reason, and with
         // the source codec still in VideoCodec
-        if (mediaSource._litefinEac3AtmosEncode && /[?&]AllowVideoStreamCopy=false(?:&|$)/i.test(transcodeUrl)) isVideoDirect = false;
+        if ((mediaSource._litefinEac3AtmosEncode || mediaSource._litefinForcedAudioEncode) && /[?&]AllowVideoStreamCopy=false(?:&|$)/i.test(transcodeUrl)) isVideoDirect = false;
         if (isVideoDirect && this.isVideoOverTranscodeLimits(mediaSource)) {
             isVideoDirect = false;
         }

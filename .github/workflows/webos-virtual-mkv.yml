@@ -1,9 +1,9 @@
-name: Build WebOS audio-only playback info fix
+name: Build WebOS selected audio policy
 
 on:
   push:
     branches:
-      - experiment/webos-audio-copy-label
+      - experiment/webos-selected-audio-policy
   workflow_dispatch:
 
 permissions:
@@ -35,7 +35,7 @@ jobs:
           npm run package:webos-modern
       - uses: actions/upload-artifact@v4
         with:
-          name: Litefin-webOS-Audio-Copy-Label
+          name: Litefin-webOS-Selected-Audio-Policy
           path: Litefin-*-webOS-Modern.ipk
           if-no-files-found: error
           retention-days: 30
