@@ -39,6 +39,36 @@ if (isWebOS) {
     // Register the service on both the public and private Luna buses
     var service = new Service(pkgInfo.name);
     
+    // Luna subscription owns the virtual stream for its entire playback lifetime.
+    var virtualMkvMethod = service.register('virtualMkv');
+    var virtualMkvSessions = {};
+    virtualMkvMethod.on('request', function (message) {
+        if (!message.isSubscription) {
+            return message.respond({ returnValue: false, errorText: 'Subscription required' });
+        }
+        var key = message.uniqueToken;
+        var owner = virtualMkvSessions[key] = { token: null };
+        require('./virtual-mkv').prepare(message.payload).then(function (result) {
+            if (virtualMkvSessions[key] !== owner) {
+                require('./virtual-mkv').release(result.token);
+                return;
+            }
+            owner.token = result.token;
+            message.respond({ returnValue: true, url: result.url });
+        }).catch(function (err) {
+            if (virtualMkvSessions[key] === owner) {
+                delete virtualMkvSessions[key];
+                message.respond({ returnValue: false, errorText: err.message });
+            }
+        });
+    });
+    virtualMkvMethod.on('cancel', function (message) {
+        var key = message.uniqueToken;
+        var owner = virtualMkvSessions[key];
+        delete virtualMkvSessions[key];
+        if (owner && owner.token) require('./virtual-mkv').release(owner.token);
+    });
+
     var dgram = require('dgram');
     
     // UDP socket for Jellyfin broadcast/response
