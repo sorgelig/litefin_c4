@@ -556,9 +556,14 @@ function sendWolPacket(macAddress) {
     });
 }
 
+var virtualMkv = isWebOS ? require('./virtual-mkv') : null;
+
 function handler(req, res) {
     var u = urlMod.parse(req.url, true);
     if (req.method === 'OPTIONS') return writeResponse(res, 204, 'text/plain', '');
+    if (virtualMkv && u.pathname.indexOf('/virtual-mkv/') === 0) {
+        return virtualMkv.handle(req, res, u.pathname);
+    }
 
     if (u.pathname === '/player.html') {
         return writeResponse(res, 200, 'text/html', PLAYER_HTML);
