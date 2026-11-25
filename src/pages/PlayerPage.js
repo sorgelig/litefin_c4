@@ -940,12 +940,10 @@ class PlayerPage extends Page {
             };
             eventBus.on('remote:userdatachanged', this._onRemoteUserDataChanged);
 
-            // Channel Up/Down for Live TV
-            this._onChannelUp = () => this._handleChannelChange(1);
-            this.on('key:channelUp', lockCheck(this._onChannelUp));
-
-            this._onChannelDown = () => this._handleChannelChange(-1);
-            this.on('key:channelDown', lockCheck(this._onChannelDown));
+            // One handler per physical channel/page key. Live TV keeps channel
+            // switching; LG webOS video playback uses chapter navigation.
+            this.on('key:channelUp', lockCheck(() => this._onRemoteChannelUp()));
+            this.on('key:channelDown', lockCheck(() => this._onRemoteChannelDown()));
 
             // ================================================================
             // MAGIC CURSOR SUPPORT (WebOS / Tizen Pointer)
@@ -1169,8 +1167,6 @@ class PlayerPage extends Page {
             this.on('key:stop', () => this._onRemoteStop());
             this.on('key:next', () => this._onRemoteNext());
             this.on('key:previous', () => this._onRemotePrevious());
-            this.on('key:channelUp', () => this._onRemoteChannelUp());
-            this.on('key:channelDown', () => this._onRemoteChannelDown());
 
             this.on('key:rewind', () => {
                 if (this._isScreenLocked) {
@@ -6387,12 +6383,36 @@ class PlayerPage extends Page {
      */
     _onRemoteChannelUp() {
         log.info('Remote: Channel Up');
-        this._handleChannelChange(1);
+        return this._handleRemoteChannelNavigation(1);
     }
 
     _onRemoteChannelDown() {
         log.info('Remote: Channel Down');
-        this._handleChannelChange(-1);
+        return this._handleRemoteChannelNavigation(-1);
+    }
+
+    _handleRemoteChannelNavigation(direction) {
+        if (!this._item || this._isSwitching || this._isExiting || this._isDestroyed) return;
+        if (this._item.Type === 'TvChannel') {
+            return this._handleChannelChange(direction);
+        }
+
+        // Keep non-webOS channel-key behavior unchanged.
+        if (!platformInfo.isWebOS || !this._player || this._osd?.isModalOpen) return;
+
+        // Preserve music/audiobook queue navigation.
+        if (this._item.MediaType === 'Audio' || this._item.Type === 'AudioBook') {
+            return direction > 0 ? this._onRemoteNext() : this._onRemotePrevious();
+        }
+
+        // A movie without chapters must not unexpectedly restart or change items.
+        if (!this._player.getChapters?.()?.length) return;
+        if (direction > 0) {
+            this._player.nextChapter();
+        } else {
+            this._player.previousChapter();
+        }
+        this._osd?.resetAutoHide?.();
     }
 
     async _handleChannelChange(direction) {

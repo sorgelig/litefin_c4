@@ -114,7 +114,7 @@ test('PlaybackInfo: a forced direct stream shows the video copied and the audio 
     assert.strictEqual(value(rows, 'LabelPlayMethod'), 'DirectStreaming');
     assert.strictEqual(value(rows, 'LabelVideoCodec'), 'H264 (copy)');
     // The server picks one of the listed codecs (AC-3 for this DTS:X file on the C4)
-    assert.strictEqual(value(rows, 'LabelAudioCodec'), 'DTS → EAC3/AC3 @ 640 kbps (requested)');
+    assert.strictEqual(value(rows, 'LabelAudioCodec'), 'DTS → EAC3/AC3 @ 640 kbps');
     assert.strictEqual(value(rows, 'LabelTranscodeReasons'), 'AudioCodecNotSupported, DirectPlayError');
 });
 
@@ -127,7 +127,7 @@ test('PlaybackInfo: a real transcode still shows Transcoding (guard)', () => {
     const rows = render(hevc, 'Transcode');
     assert.strictEqual(value(rows, 'LabelPlayMethod'), 'Transcoding');
     assert.strictEqual(value(rows, 'LabelVideoCodec'), 'HEVC → H264');
-    assert.strictEqual(value(rows, 'LabelAudioCodec'), 'EAC3 → AAC @ 384 kbps (requested)');
+    assert.strictEqual(value(rows, 'LabelAudioCodec'), 'EAC3 → AAC @ 384 kbps');
     assert.strictEqual(value(rows, 'LabelTranscodeReasons'), 'VideoCodecNotSupported, AudioCodecNotSupported');
 });
 
@@ -149,7 +149,7 @@ test('PlaybackInfo: Atmos audio-only encode with omitted VideoCodec is shown as 
     const rows = render(src, 'Transcode');
     assert.strictEqual(value(rows, 'LabelPlayMethod'), 'DirectStreaming');
     assert.strictEqual(value(rows, 'LabelVideoCodec'), 'HEVC (copy)');
-    assert.strictEqual(value(rows, 'LabelAudioCodec'), 'EAC3 → EAC3 @ 3072 kbps (requested)');
+    assert.strictEqual(value(rows, 'LabelAudioCodec'), 'EAC3 → EAC3 @ 3072 kbps');
     assert.strictEqual(value(rows, 'LabelTranscodeReasons'), 'DirectPlayError');
     // Display correction must not rewrite the playback URL.
     assert.ok(!src.TranscodingUrl.includes('VideoCodec='));

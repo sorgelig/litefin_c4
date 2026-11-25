@@ -1,9 +1,9 @@
-name: Build WebOS selected audio policy
+name: Build WebOS chapter remote keys
 
 on:
   push:
     branches:
-      - experiment/webos-selected-audio-policy
+      - experiment/webos-chapter-keys
   workflow_dispatch:
 
 permissions:
@@ -25,17 +25,19 @@ jobs:
           node --check services/virtual-mkv.js
           node --check src/player/core/JellyfinPlayer.js
           node --check src/player/core/WebOSPlayer.js
+          node --check src/webos/WebOSAdapter.js
+          node --check src/pages/PlayerPage.js
           node --check src/pages/settings/tabs/PlayerTab.js
           node --check src/pages/settings/controllers/SettingsDropdownConfig.js
           node --check src/pages/settings/controllers/SettingsDropdownDispatcher.js
-          node --test tests/WebOSVirtualMkv.test.js tests/WebOSEac3Bitrate.test.js tests/WebOSEac3Atmos.test.js tests/PlaybackInfoPlayMethod.test.js tests/TranscodeLabel.test.js
+          node --test tests/WebOSVirtualMkv.test.js tests/WebOSEac3Bitrate.test.js tests/WebOSEac3Atmos.test.js tests/PlaybackInfoPlayMethod.test.js tests/TranscodeLabel.test.js tests/PlayerPageRemoteListeners.test.js tests/WebOSChapterKeys.test.js
       - name: Build webOS Modern IPK
         run: |
           mkdir -p .sign
           npm run package:webos-modern
       - uses: actions/upload-artifact@v4
         with:
-          name: Litefin-webOS-Selected-Audio-Policy
+          name: Litefin-webOS-Chapter-Keys
           path: Litefin-*-webOS-Modern.ipk
           if-no-files-found: error
           retention-days: 30

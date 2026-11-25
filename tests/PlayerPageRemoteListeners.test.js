@@ -91,7 +91,7 @@ function createSession() {
         }
     });
     const methods = vm.runInContext(
-        `({\n${['async onInit() {', 'destroy() {'].map(extractMethod).join(',\n')}\n})`,
+        `({\n${['async onInit() {', 'destroy() {', '_onRemoteChannelUp() {', '_onRemoteChannelDown() {', '_handleRemoteChannelNavigation(direction) {'].map(extractMethod).join(',\n')}\n})`,
         context
     );
     // Component.on() and Component.destroy() (super.destroy() in PlayerPage.destroy())
@@ -212,4 +212,50 @@ test('PlayerPage: while the screen is locked, Next from the Jellyfin app is igno
     assert.strictEqual(first.calls.next, 0);
     assert.strictEqual(second.calls.next, 0);
     assert.strictEqual(second.calls.lockIndicator, 1);
+});
+
+test('LG channel keys navigate chapters once without advancing the play queue', async () => {
+    const { bus, openPage, leave } = createSession();
+    const { page, calls } = await openPage('movie');
+    let nextChapter = 0, previousChapter = 0;
+    page._item = { Type: 'Movie' };
+    page._player.getChapters = () => [{StartPositionTicks:0},{StartPositionTicks:600000000}];
+    page._player.nextChapter = () => nextChapter++;
+    page._player.previousChapter = () => previousChapter++;
+    bus.emit('key:channelUp');
+    bus.emit('key:channelDown');
+    assert.equal(nextChapter,1);
+    assert.equal(previousChapter,1);
+    assert.equal(calls.next,0);
+    assert.equal(calls.previous,0);
+    page._player.getChapters = () => [];
+    bus.emit('key:channelDown');
+    assert.equal(previousChapter,1);
+    assert.equal(calls.previous,0);
+    page._player.getChapters = () => [{}];
+    page._isScreenLocked = true;
+    bus.emit('key:channelUp');
+    assert.equal(nextChapter,1);
+    assert.equal(calls.lockIndicator,1);
+    page._isScreenLocked = false;
+    page._resumeProfileSelectionActive = true;
+    bus.emit('key:channelUp');
+    assert.equal(nextChapter,1);
+    page._resumeProfileSelectionActive = false;
+    page._osd = {isModalOpen:true, destroy:noop};
+    bus.emit('key:channelUp');
+    assert.equal(nextChapter,1);
+    page._osd = null;
+    const channelChanges = [];
+    page._item = {Type:'TvChannel'};
+    page._handleChannelChange = direction => channelChanges.push(direction);
+    bus.emit('key:channelUp');
+    bus.emit('key:channelDown');
+    assert.deepEqual(channelChanges,[1,-1]);
+    page._item = {Type:'Audio',MediaType:'Audio'};
+    bus.emit('key:channelUp');
+    bus.emit('key:channelDown');
+    assert.equal(calls.next,1);
+    assert.equal(calls.previous,1);
+    leave(page);
 });

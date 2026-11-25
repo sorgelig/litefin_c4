@@ -351,13 +351,22 @@ class WebOSAdapter {
                     eventBus.emit('key:fastForward', e);
                     break;
                 case WEBOS_KEYS.NEXT:
-                    eventBus.emit('key:next', e);
-                    eventBus.emit('key:channelUp', e);
+                case WEBOS_KEYS.PREV: {
+                    // Page/Channel keys must not also advance the playback queue.
+                    // The player page owns chapter navigation and Live TV zapping.
+                    const up = keyCode === WEBOS_KEYS.NEXT;
+                    if (isPlayerActive) {
+                        if (!isTextInput) {
+                            e.preventDefault();
+                            eventBus.emit(up ? 'key:channelUp' : 'key:channelDown', e);
+                        }
+                    } else {
+                        // Retain the existing mappings outside playback.
+                        eventBus.emit(up ? 'key:next' : 'key:previous', e);
+                        eventBus.emit(up ? 'key:channelUp' : 'key:channelDown', e);
+                    }
                     break;
-                case WEBOS_KEYS.PREV:
-                    eventBus.emit('key:previous', e);
-                    eventBus.emit('key:channelDown', e);
-                    break;
+                }
 
                 case WEBOS_KEYS.RED:
                     eventBus.emit('key:red', e);
