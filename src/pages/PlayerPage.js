@@ -942,8 +942,8 @@ class PlayerPage extends Page {
 
             // One handler per physical channel/page key. Live TV keeps channel
             // switching; LG webOS video playback uses chapter navigation.
-            this.on('key:channelUp', lockCheck(() => this._onRemoteChannelUp()));
-            this.on('key:channelDown', lockCheck(() => this._onRemoteChannelDown()));
+            this.on('key:channelUp', lockCheck(event => this._onRemoteChannelUp(event)));
+            this.on('key:channelDown', lockCheck(event => this._onRemoteChannelDown(event)));
 
             // ================================================================
             // MAGIC CURSOR SUPPORT (WebOS / Tizen Pointer)
@@ -6381,17 +6381,17 @@ class PlayerPage extends Page {
      * @param {number} direction - 1 for Up, -1 for Down
      * @private
      */
-    _onRemoteChannelUp() {
+    _onRemoteChannelUp(event) {
         log.info('Remote: Channel Up');
-        return this._handleRemoteChannelNavigation(1);
+        return this._handleRemoteChannelNavigation(1, event);
     }
 
-    _onRemoteChannelDown() {
+    _onRemoteChannelDown(event) {
         log.info('Remote: Channel Down');
-        return this._handleRemoteChannelNavigation(-1);
+        return this._handleRemoteChannelNavigation(-1, event);
     }
 
-    _handleRemoteChannelNavigation(direction) {
+    _handleRemoteChannelNavigation(direction, event) {
         if (!this._item || this._isSwitching || this._isExiting || this._isDestroyed) return;
         if (this._item.Type === 'TvChannel') {
             return this._handleChannelChange(direction);
@@ -6406,7 +6406,7 @@ class PlayerPage extends Page {
         }
 
         // A movie without chapters must not unexpectedly restart or change items.
-        if (!this._player.getChapters?.()?.length) return;
+        if (event?.repeat || !this._player.getChapters?.()?.length) return;
         if (direction > 0) {
             this._player.nextChapter();
         } else {

@@ -91,7 +91,7 @@ function createSession() {
         }
     });
     const methods = vm.runInContext(
-        `({\n${['async onInit() {', 'destroy() {', '_onRemoteChannelUp() {', '_onRemoteChannelDown() {', '_handleRemoteChannelNavigation(direction) {'].map(extractMethod).join(',\n')}\n})`,
+        `({\n${['async onInit() {', 'destroy() {', '_onRemoteChannelUp(event) {', '_onRemoteChannelDown(event) {', '_handleRemoteChannelNavigation(direction, event) {'].map(extractMethod).join(',\n')}\n})`,
         context
     );
     // Component.on() and Component.destroy() (super.destroy() in PlayerPage.destroy())
@@ -226,6 +226,10 @@ test('LG channel keys navigate chapters once without advancing the play queue', 
     bus.emit('key:channelDown');
     assert.equal(nextChapter,1);
     assert.equal(previousChapter,1);
+    bus.emit('key:channelDown', {repeat:true});
+    bus.emit('key:channelUp', {repeat:true});
+    assert.equal(previousChapter,1);
+    assert.equal(nextChapter,1);
     assert.equal(calls.next,0);
     assert.equal(calls.previous,0);
     page._player.getChapters = () => [];

@@ -2284,6 +2284,7 @@ export class JellyfinPlayer extends EventEmitter {
             }
 
             this._chapters = chapters;
+            this._webosChapterSeek = null;
             this.emit('chaptersloaded', { chapters: this._chapters });
 
             // ================================================================
@@ -2999,6 +3000,7 @@ export class JellyfinPlayer extends EventEmitter {
             this._clearRemuxStuckWatchdog();
             this._currentItem = null;
             this._currentMediaSource = null;
+            this._webosChapterSeek = null;
             this._currentPlayOptions = null;
             this._directPlayEscalated = false;
         }
@@ -3034,6 +3036,8 @@ export class JellyfinPlayer extends EventEmitter {
      * @param {boolean} [options.suppressWaitingEvent] - Don't emit 'waiting' during this seek's buffer phase
      */
     seek(positionTicks, options = {}) {
+        // An unrelated seek must not retain the previous chapter's logical position.
+        this._webosChapterSeek = null;
         // High-Priority State Update: Indicate that seeking is actively occurring
         this._isSeeking = true;
         this._seekTargetTicks = positionTicks;
@@ -4134,7 +4138,65 @@ export class JellyfinPlayer extends EventEmitter {
         return -1;
     }
 
+    /**
+     * webOS can land on a GOP keyframe 1–5 seconds before a chapter boundary.
+     * Keep the requested chapter as the logical origin while the seek settles,
+     * instead of interpreting that early landing as the previous chapter.
+     * Never apply a blanket look-ahead to ordinary playback.
+     */
+    _navigateWebOSChapter(direction) {
+        const chapters = this._chapters || [];
+        if (!chapters.length) return;
+
+        const now = Date.now();
+        const actualTicks = this.getCurrentPositionTicks();
+        const anchor = this._webosChapterSeek;
+        let position = actualTicks;
+        let repeatedPrevious = false;
+
+        if (anchor && anchor.chapters === chapters) {
+            const elapsed = now - anchor.time;
+            const earlyBy = anchor.ticks - actualTicks;
+            const settling = elapsed >= 0 && elapsed < 2500;
+            // Pending seeks may briefly report the old position even after a
+            // PLAYING event clears the seeking flag. For a landed early keyframe,
+            // retain the intended boundary until playback reaches it.
+            if (settling || (earlyBy > 0 && earlyBy <= 50000000)) {
+                position = anchor.ticks;
+            }
+            // Only successive PREVIOUS requests may bypass the restart rule;
+            // NEXT must never arm it.
+            repeatedPrevious = settling && direction < 0 && anchor.direction < 0 &&
+                this.getCurrentChapterIndex(position) === anchor.index;
+        }
+
+        const currentIndex = this.getCurrentChapterIndex(position);
+        let targetIndex;
+        if (direction > 0) {
+            // Next always advances one chapter, regardless of elapsed time.
+            targetIndex = currentIndex + 1;
+            if (targetIndex >= chapters.length) return;
+        } else {
+            if (currentIndex < 0) return;
+            const start = chapters[currentIndex].StartPositionTicks || 0;
+            const elapsedInChapter = position - start;
+            // Previous alone uses the three-second restart rule.
+            targetIndex = elapsedInChapter > 30000000 && !repeatedPrevious
+                ? currentIndex : Math.max(0, currentIndex - 1);
+        }
+
+        const ticks = chapters[targetIndex].StartPositionTicks || 0;
+        log.info('webOS chapter navigation:', direction > 0 ? 'next' : 'previous',
+            'from', currentIndex, 'to', targetIndex, 'at', ticks);
+        this.seek(ticks);
+        // seek() clears an old anchor; record the new target afterwards.
+        this._webosChapterSeek = { chapters, index: targetIndex, ticks, direction, time: now };
+    }
+
     nextChapter() {
+        if (this._backendType === 'webos') {
+            return this._navigateWebOSChapter(1);
+        }
         // Tizen Seek Offset Workaround:
         // On Tizen, we apply a -2.5s offset to chapter seeks (see below).
         // This causes "Next Chapter" to land slightly before the actual chapter start.
@@ -4178,6 +4240,9 @@ export class JellyfinPlayer extends EventEmitter {
     }
 
     previousChapter() {
+        if (this._backendType === 'webos') {
+            return this._navigateWebOSChapter(-1);
+        }
         // Tizen Seek Offset Workaround:
         // On Tizen, nextChapter() applies a -2.5s offset to chapter seeks, landing slightly
         // before the actual chapter start. To prevent previousChapter() from misidentifying

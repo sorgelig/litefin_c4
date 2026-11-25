@@ -1,9 +1,9 @@
-name: Build WebOS chapter remote keys
+name: Build WebOS chapter seek fix
 
 on:
   push:
     branches:
-      - experiment/webos-chapter-keys
+      - experiment/webos-chapter-seek-fix
   workflow_dispatch:
 
 permissions:
@@ -30,14 +30,14 @@ jobs:
           node --check src/pages/settings/tabs/PlayerTab.js
           node --check src/pages/settings/controllers/SettingsDropdownConfig.js
           node --check src/pages/settings/controllers/SettingsDropdownDispatcher.js
-          node --test tests/WebOSVirtualMkv.test.js tests/WebOSEac3Bitrate.test.js tests/WebOSEac3Atmos.test.js tests/PlaybackInfoPlayMethod.test.js tests/TranscodeLabel.test.js tests/PlayerPageRemoteListeners.test.js tests/WebOSChapterKeys.test.js
+          node --test tests/WebOSVirtualMkv.test.js tests/WebOSEac3Bitrate.test.js tests/WebOSEac3Atmos.test.js tests/PlaybackInfoPlayMethod.test.js tests/TranscodeLabel.test.js tests/PlayerPageRemoteListeners.test.js tests/WebOSChapterKeys.test.js tests/WebOSChapterSeek.test.js
       - name: Build webOS Modern IPK
         run: |
           mkdir -p .sign
           npm run package:webos-modern
       - uses: actions/upload-artifact@v4
         with:
-          name: Litefin-webOS-Chapter-Keys
+          name: Litefin-webOS-Chapter-Seek-Fix
           path: Litefin-*-webOS-Modern.ipk
           if-no-files-found: error
           retention-days: 30
